@@ -6,6 +6,7 @@ Task 1 Goals
  * Remove missing values
  * Select top X features (https://scikit-learn.org/stable/modules/feature_selection.html)
  * Normalize features
+ * Manage outliers
  * Visualize (normalized) top X features (scatter plot different columns, PCA, t-SNE)
  * Do linear regression fit (with and without regularization) and visualize (answers whether we need a nonlinear model)
  * Submit initial model and see how it performs
