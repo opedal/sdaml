@@ -17,7 +17,8 @@ Read up on Bootstrap
 **Step 1:**
 
 Create a function in a pipeline fashion with a very simple model, that can be used for testing
-    Separately for bootstrapping and cv?
+
+Separately for bootstrapping and cv?
 
 
 **Step 2:**
