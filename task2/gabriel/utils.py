@@ -1,7 +1,10 @@
 #import libraries
+import importlib
 from sklearn.feature_selection import SelectPercentile
 import numpy as np
 import pandas as pd
+import sklearn
+import copy
 from sklearn import linear_model
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, make_scorer
@@ -39,6 +42,10 @@ from xgboost import XGBClassifier
 from sklearn.model_selection import RandomizedSearchCV, KFold
 from bayes_opt import BayesianOptimization
 from sklearn.pipeline import Pipeline
+from sklearn.ensemble import VotingRegressor, VotingClassifier
+
+# SMOTE stuff
+from imblearn.utils import check_sampling_strategy, check_target_type
 
 #define functions for loading data and producing final CSV
 
@@ -97,6 +104,43 @@ def produce_solution(y):
         for i in range(y.shape[0]):
             writer.writerow([float(i), y[i]])
 
+
+#### ADD TRANSFORM METHOD TO SMOTE CLASS
+
+'''
+Add this transform method to the SMOTE class so that it works with sklearn pipeline
+'''
+def fit(self, X, y):
+    self._deprecate_ratio()
+    X, y, _ = self._check_X_y(X, y)
+    self.sampling_strategy_ = check_sampling_strategy(
+        self.sampling_strategy, y, self._sampling_type)
+    self.saved_y = y # This is my modification, save y
+    return self
+def transform(self, X):
+    return self.fit_sample(X, self.saved_y)
+def fit_transform(self, X, y):
+    print("RUNNING THE FIT TRANSFORM THING")
+    print("SIZES:", self.fit_sample(X, y)[0].shape, self.fit_sample(X, y)[1].shape)
+    return self.fit_sample(X, y)
+setattr(SMOTE, 'fit', fit) # Add this as a method to the SMOTE class
+setattr(SMOTE, 'transform', transform) # Add this as a method to the SMOTE class
+setattr(SMOTE, 'fit_transform', fit_transform) # Add this as a method to the SMOTE class
+
+### THE ABOVE DOESN't Work, have to create a new META Estimator that contains SMOTE: #####
+class SMOTEClassifier():
+    def __init__(self, smote, classifier):
+        self.smote = smote
+        self.classifier = classifier
+
+    def fit(self, X, y):
+        self.smote_ = copy.shallowcopy(self.smote)
+        X_smote, y_smote = self.smote_.fit_sample(X, y)
+        self.classifier_ = copy.shallowcopy(self.classifier).fit(X_smote, y_smote)
+        return self
+
+    def predict(self, X):
+        return self.classifier_.predict(X)
 
 def trained_model1(X_train, X_test, y_train):
     '''
