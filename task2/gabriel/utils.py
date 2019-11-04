@@ -1,5 +1,6 @@
 #import libraries
 import importlib
+import matplotlib.pyplot as plt
 from sklearn.feature_selection import SelectPercentile
 import numpy as np
 import pandas as pd
@@ -43,6 +44,10 @@ from sklearn.model_selection import RandomizedSearchCV, KFold
 from bayes_opt import BayesianOptimization
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import VotingRegressor, VotingClassifier
+from sklearn import svm, datasets
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+from sklearn.utils.multiclass import unique_labels
 
 # SMOTE stuff
 from imblearn.utils import check_sampling_strategy, check_target_type
@@ -105,28 +110,6 @@ def produce_solution(y):
             writer.writerow([float(i), y[i]])
 
 
-#### ADD TRANSFORM METHOD TO SMOTE CLASS
-
-'''
-Add this transform method to the SMOTE class so that it works with sklearn pipeline
-'''
-def fit(self, X, y):
-    self._deprecate_ratio()
-    X, y, _ = self._check_X_y(X, y)
-    self.sampling_strategy_ = check_sampling_strategy(
-        self.sampling_strategy, y, self._sampling_type)
-    self.saved_y = y # This is my modification, save y
-    return self
-def transform(self, X):
-    return self.fit_sample(X, self.saved_y)
-def fit_transform(self, X, y):
-    print("RUNNING THE FIT TRANSFORM THING")
-    print("SIZES:", self.fit_sample(X, y)[0].shape, self.fit_sample(X, y)[1].shape)
-    return self.fit_sample(X, y)
-setattr(SMOTE, 'fit', fit) # Add this as a method to the SMOTE class
-setattr(SMOTE, 'transform', transform) # Add this as a method to the SMOTE class
-setattr(SMOTE, 'fit_transform', fit_transform) # Add this as a method to the SMOTE class
-
 ### THE ABOVE DOESN't Work, have to create a new META Estimator that contains SMOTE: #####
 class SMOTEClassifier():
     def __init__(self, smote, classifier):
@@ -134,13 +117,69 @@ class SMOTEClassifier():
         self.classifier = classifier
 
     def fit(self, X, y):
-        self.smote_ = copy.shallowcopy(self.smote)
+        self.smote_ = copy.deepcopy(self.smote)
         X_smote, y_smote = self.smote_.fit_sample(X, y)
-        self.classifier_ = copy.shallowcopy(self.classifier).fit(X_smote, y_smote)
+        self.classifier_ = copy.deepcopy(self.classifier).fit(X_smote, y_smote)
         return self
 
     def predict(self, X):
         return self.classifier_.predict(X)
+
+#### PLOTTING FUNCTIONS ####
+
+def plot_confusion_matrix(y_true, y_pred, classes,
+                          normalize=False,
+                          title=None,
+                          cmap=plt.cm.Blues):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if not title:
+        if normalize:
+            title = 'Normalized confusion matrix'
+        else:
+            title = 'Confusion matrix, without normalization'
+
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    # Only use the labels that appear in the data
+    # classes = classes[unique_labels(y_true, y_pred)]
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        print("Normalized confusion matrix")
+    else:
+        print('Confusion matrix, without normalization')
+
+    print(cm)
+
+    fig, ax = plt.subplots()
+    im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
+    ax.figure.colorbar(im, ax=ax)
+    # We want to show all ticks...
+    ax.set(xticks=np.arange(cm.shape[1]),
+           yticks=np.arange(cm.shape[0]),
+           # ... and label them with the respective list entries
+           xticklabels=classes, yticklabels=classes,
+           title=title,
+           ylabel='True label',
+           xlabel='Predicted label')
+
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+             rotation_mode="anchor")
+
+    # Loop over data dimensions and create text annotations.
+    fmt = '.2f' if normalize else 'd'
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, format(cm[i, j], fmt),
+                    ha="center", va="center",
+                    color="white" if cm[i, j] > thresh else "black")
+    fig.tight_layout()
+    return ax
+
 
 def trained_model1(X_train, X_test, y_train):
     '''
