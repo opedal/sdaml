@@ -109,8 +109,6 @@ def produce_solution(y):
         for i in range(y.shape[0]):
             writer.writerow([float(i), y[i]])
 
-
-### THE ABOVE DOESN't Work, have to create a new META Estimator that contains SMOTE: #####
 class SMOTEClassifier():
     def __init__(self, smote, classifier):
         self.smote = smote
