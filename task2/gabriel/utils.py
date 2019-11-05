@@ -116,7 +116,7 @@ class SMOTEClassifier():
 
     def fit(self, X, y):
         self.smote_ = copy.deepcopy(self.smote)
-        X_smote, y_smote = self.smote_.fit_sample(X, y)
+        X_smote, y_smote = self.smote_.fit_resample(X, y)
         self.classifier_ = copy.deepcopy(self.classifier).fit(X_smote, y_smote)
         return self
 
