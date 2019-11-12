@@ -1,7 +1,7 @@
 #import libraries
 import importlib
 import matplotlib.pyplot as plt
-from sklearn.feature_selection import SelectPercentile
+from sklearn.feature_selection import SelectPercentile, VarianceThreshold
 import numpy as np
 import pandas as pd
 import sklearn
@@ -18,8 +18,8 @@ from sklearn import ensemble
 from sklearn import neural_network
 from sklearn import svm
 from sklearn import kernel_ridge
-from sklearn.decomposition import KernelPCA
-from sklearn.feature_selection import RFECV
+from sklearn.decomposition import KernelPCA, PCA
+from sklearn.feature_selection import RFECV, SelectKBest, mutual_info_classif, chi2, f_classif
 import csv
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import IsolationForest
