@@ -12,7 +12,7 @@ from sklearn.metrics import r2_score, make_scorer
 from sklearn import preprocessing
 from sklearn import neighbors
 from sklearn import feature_selection
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold, KFold, GridSearchCV
 from sklearn.model_selection import cross_val_score
 from sklearn import ensemble
 from sklearn import neural_network
@@ -54,6 +54,24 @@ from imblearn.utils import check_sampling_strategy, check_target_type
 
 # Neural Net:
 from sklearn.neural_network import MLPClassifier
+import tensorflow
+from tensorflow import keras
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.wrappers.scikit_learn import KerasClassifier
+from pandas import read_csv
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import Dropout
+from keras.wrappers.scikit_learn import KerasClassifier
+from keras.constraints import maxnorm
+from keras.optimizers import SGD
+from sklearn.model_selection import cross_val_score
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+
 
 #define functions for loading data and producing final CSV
 
@@ -116,13 +134,14 @@ class SMOTEClassifier():
     def __init__(self, smote, classifier):
         self.smote = smote
         self.classifier = classifier
+        self.classifier_ = sklearn.base.clone(self.classifier)
 
-    def fit(self, X, y):
+    def fit(self, X, y, *args):
         # self.smote_ = copy.deepcopy(self.smote)
         smote = SMOTE(random_state=42)
         X_smote, y_smote = smote.fit_resample(X, y)
         # X_smote, y_smote = self.smote.fit_resample(X, y)
-        self.classifier_ = sklearn.base.clone(self.classifier).fit(X_smote, y_smote)
+        self.classifier_.fit(X_smote, y_smote, *args)
         # self.classifier.fit(X_smote, y_smote)
         return self
 
@@ -132,6 +151,15 @@ class SMOTEClassifier():
 
     def score(self, ytest, ypred):
         return balanced_accuracy_score(ytest, ypred)
+
+    def set_params(*params):
+        self.classifier_.set_params(*params)
+        return
+
+    def set_params(*params):
+        self.classifier_.set_params(*params)
+        return
+
 
 #### PLOTTING FUNCTIONS ####
 
