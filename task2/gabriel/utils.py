@@ -48,6 +48,7 @@ from sklearn import svm, datasets
 from sklearn.model_selection import train_test_split, learning_curve, validation_curve
 from sklearn.metrics import confusion_matrix
 from sklearn.utils.multiclass import unique_labels
+import itertools
 
 # SMOTE stuff
 from imblearn.utils import check_sampling_strategy, check_target_type
@@ -57,7 +58,7 @@ from sklearn.neural_network import MLPClassifier
 import tensorflow
 from tensorflow import keras
 from keras.models import Sequential
-from keras.layers import Dense
+from keras.layers import Dense, Lambda
 from keras.wrappers.scikit_learn import KerasClassifier
 from pandas import read_csv
 from keras.models import Sequential
