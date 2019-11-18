@@ -1,7 +1,7 @@
 #import libraries
 import importlib
 import matplotlib.pyplot as plt
-from sklearn.feature_selection import SelectPercentile
+from sklearn.feature_selection import SelectPercentile, VarianceThreshold
 import numpy as np
 import pandas as pd
 import sklearn
@@ -12,14 +12,14 @@ from sklearn.metrics import r2_score, make_scorer
 from sklearn import preprocessing
 from sklearn import neighbors
 from sklearn import feature_selection
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold, KFold, GridSearchCV
 from sklearn.model_selection import cross_val_score
 from sklearn import ensemble
 from sklearn import neural_network
 from sklearn import svm
 from sklearn import kernel_ridge
-from sklearn.decomposition import KernelPCA
-from sklearn.feature_selection import RFECV
+from sklearn.decomposition import KernelPCA, PCA
+from sklearn.feature_selection import RFECV, SelectKBest, mutual_info_classif, chi2, f_classif
 import csv
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import IsolationForest
@@ -45,12 +45,34 @@ from bayes_opt import BayesianOptimization
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import VotingRegressor, VotingClassifier
 from sklearn import svm, datasets
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, learning_curve, validation_curve
 from sklearn.metrics import confusion_matrix
 from sklearn.utils.multiclass import unique_labels
+import itertools
 
 # SMOTE stuff
 from imblearn.utils import check_sampling_strategy, check_target_type
+
+# Neural Net:
+from sklearn.neural_network import MLPClassifier
+import tensorflow
+from tensorflow import keras
+from keras.models import Sequential
+from keras.layers import Dense, Lambda
+from keras.wrappers.scikit_learn import KerasClassifier
+from pandas import read_csv
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import Dropout
+from keras.wrappers.scikit_learn import KerasClassifier
+from keras.constraints import maxnorm
+from keras.optimizers import SGD
+from sklearn.model_selection import cross_val_score
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+
 
 #define functions for loading data and producing final CSV
 
@@ -113,15 +135,32 @@ class SMOTEClassifier():
     def __init__(self, smote, classifier):
         self.smote = smote
         self.classifier = classifier
+        self.classifier_ = sklearn.base.clone(self.classifier)
 
-    def fit(self, X, y):
-        self.smote_ = copy.deepcopy(self.smote)
-        X_smote, y_smote = self.smote_.fit_resample(X, y)
-        self.classifier_ = copy.deepcopy(self.classifier).fit(X_smote, y_smote)
+    def fit(self, X, y, *args):
+        # self.smote_ = copy.deepcopy(self.smote)
+        smote = SMOTE(random_state=42)
+        X_smote, y_smote = smote.fit_resample(X, y)
+        # X_smote, y_smote = self.smote.fit_resample(X, y)
+        self.classifier_.fit(X_smote, y_smote, *args)
+        # self.classifier.fit(X_smote, y_smote)
         return self
 
     def predict(self, X):
+        # return self.classifier.predict(X)
         return self.classifier_.predict(X)
+
+    def score(self, ytest, ypred):
+        return balanced_accuracy_score(ytest, ypred)
+
+    def set_params(*params):
+        self.classifier_.set_params(*params)
+        return
+
+    def set_params(*params):
+        self.classifier_.set_params(*params)
+        return
+
 
 #### PLOTTING FUNCTIONS ####
 
@@ -177,6 +216,118 @@ def plot_confusion_matrix(y_true, y_pred, classes,
                     color="white" if cm[i, j] > thresh else "black")
     fig.tight_layout()
     return ax
+
+def plot_learning_curve(estimator, title, X, y, ylim=None, cv=None,
+                        n_jobs=None, train_sizes=np.linspace(.1, 1.0, 5)):
+    """
+    Generate a simple plot of the test and training learning curve.
+
+    Parameters
+    ----------
+    estimator : object type that implements the "fit" and "predict" methods
+        An object of that type which is cloned for each validation.
+
+    title : string
+        Title for the chart.
+
+    X : array-like, shape (n_samples, n_features)
+        Training vector, where n_samples is the number of samples and
+        n_features is the number of features.
+
+    y : array-like, shape (n_samples) or (n_samples, n_features), optional
+        Target relative to X for classification or regression;
+        None for unsupervised learning.
+
+    ylim : tuple, shape (ymin, ymax), optional
+        Defines minimum and maximum yvalues plotted.
+
+    cv : int, cross-validation generator or an iterable, optional
+        Determines the cross-validation splitting strategy.
+        Possible inputs for cv are:
+          - None, to use the default 3-fold cross-validation,
+          - integer, to specify the number of folds.
+          - :term:`CV splitter`,
+          - An iterable yielding (train, test) splits as arrays of indices.
+
+        For integer/None inputs, if ``y`` is binary or multiclass,
+        :class:`StratifiedKFold` used. If the estimator is not a classifier
+        or if ``y`` is neither binary nor multiclass, :class:`KFold` is used.
+
+        Refer :ref:`User Guide <cross_validation>` for the various
+        cross-validators that can be used here.
+
+    n_jobs : int or None, optional (default=None)
+        Number of jobs to run in parallel.
+        ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
+        ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
+        for more details.
+
+    train_sizes : array-like, shape (n_ticks,), dtype float or int
+        Relative or absolute numbers of training examples that will be used to
+        generate the learning curve. If the dtype is float, it is regarded as a
+        fraction of the maximum size of the training set (that is determined
+        by the selected validation method), i.e. it has to be within (0, 1].
+        Otherwise it is interpreted as absolute sizes of the training sets.
+        Note that for classification the number of samples usually have to
+        be big enough to contain at least one sample from each class.
+        (default: np.linspace(0.1, 1.0, 5))
+    """
+    plt.figure()
+    plt.title(title)
+    if ylim is not None:
+        plt.ylim(*ylim)
+    plt.xlabel("Training examples")
+    plt.ylabel("Score")
+    train_sizes, train_scores, test_scores = learning_curve(
+        estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes)
+    train_scores_mean = np.mean(train_scores, axis=1)
+    train_scores_std = np.std(train_scores, axis=1)
+    test_scores_mean = np.mean(test_scores, axis=1)
+    test_scores_std = np.std(test_scores, axis=1)
+    plt.grid()
+
+    plt.fill_between(train_sizes, train_scores_mean - train_scores_std,
+                     train_scores_mean + train_scores_std, alpha=0.1,
+                     color="r")
+    plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
+                     test_scores_mean + test_scores_std, alpha=0.1, color="g")
+    plt.plot(train_sizes, train_scores_mean, 'o-', color="r",
+             label="Training score")
+    plt.plot(train_sizes, test_scores_mean, 'o-', color="g",
+             label="Cross-validation score")
+
+    plt.legend(loc="best")
+    return plt
+
+def plot_validation_curve(estimator, title, X, y, param_name='gamma',
+                    param_range=np.linspace(.1, 1.0, 5), cv=5,
+                    scoring="accuracy", n_jobs=1):
+
+    train_scores, test_scores = validation_curve(
+        estimator, X, y, param_name=param_name, param_range=param_range,
+        cv=cv, scoring=scoring, n_jobs=n_jobs)
+    train_scores_mean = np.mean(train_scores, axis=1)
+    train_scores_std = np.std(train_scores, axis=1)
+    test_scores_mean = np.mean(test_scores, axis=1)
+    test_scores_std = np.std(test_scores, axis=1)
+
+    plt.title(title)
+    plt.xlabel(param_name)
+    plt.ylabel("Score")
+    # plt.ylim(0.0, 1.1)
+    lw = 2
+    plt.plot(param_range, train_scores_mean, label="Training score",
+                 color="darkorange", lw=lw)
+    plt.fill_between(param_range, train_scores_mean - train_scores_std,
+                     train_scores_mean + train_scores_std, alpha=0.2,
+                     color="darkorange", lw=lw)
+    plt.plot(param_range, test_scores_mean, label="Cross-validation score",
+                 color="navy", lw=lw)
+    plt.fill_between(param_range, test_scores_mean - test_scores_std,
+                     test_scores_mean + test_scores_std, alpha=0.2,
+                     color="navy", lw=lw)
+    plt.legend(loc="best")
+    plt.show()
 
 
 def trained_model1(X_train, X_test, y_train):
