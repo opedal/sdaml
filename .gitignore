@@ -1,0 +1,11 @@
+# Ignore csvs before uploading to git
+*.csv
+task3/gabriel/*.csv
+/task3/gabriel/*.csv
+./task3/gabriel/*.csv
+gabriel/*.csv
+/gabriel/*.csv
+nico/*.csv
+/nico/*.csv
+andreas/*.csv
+/andreas/*.csv
