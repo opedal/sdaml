@@ -128,9 +128,9 @@ def to_be_eliminated(df):
 loading training and test datasets
 '''
 def load_data():
-    X_train = pd.read_csv("X_train.csv")
-    X_test = pd.read_csv("X_test.csv")
-    y_train = pd.read_csv("y_train.csv")
+    X_train = pd.read_csv("../../../task3_data/X_train.csv")
+    X_test = pd.read_csv("../../../task3_data/X_test.csv")
+    y_train = pd.read_csv("../../../task3_data/y_train.csv")
 
     #dropping id column
     X_train = X_train.drop('id', axis = 1)
