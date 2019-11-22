@@ -86,6 +86,7 @@ import math
 from sklearn.model_selection import train_test_split
 from os import listdir
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report, confusion_matrix
+import biosppy.signals.ecg as bs_ecg
 
 '''
 LSTM
