@@ -107,14 +107,6 @@ def load_data():
     y_train = X_train['y']
     X_train = X_train.drop('y', axis = 1)
 
-    to_drop = to_be_eliminated(X_train)
-
-    for i in range(len(to_drop)):
-        X_train = X_train.drop(to_drop[i], axis = 1)
-
-    for i in range(len(to_drop)):
-        X_test = X_test.drop(to_drop[i], axis = 1)
-
     X_train = np.array(X_train)
     X_test = np.array(X_test)
     y_train = np.array(y_train)
