@@ -1,2 +1,2 @@
 # sdaml
-Repository for AML course
+Repository for Advanced Machine Learning course at ETH Zürich, fall 2019
