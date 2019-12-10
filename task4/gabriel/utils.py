@@ -36,6 +36,7 @@ from biosppy.signals import eeg, emg
 from scipy.signal import find_peaks,peak_prominences,peak_widths,periodogram
 from scipy.stats import kurtosis,skew
 import yasa
+from sklearn.utils.class_weight import compute_class_weight
 
 def load_data():
     print("Loading xtrain...")
@@ -125,7 +126,7 @@ def process_EEG(eeg_sig, fs=128):
 
 def process_EMG(emg_sig, fs=128):
     # Statistical Features
-    simple_stats = simple_statistics(emg_sig)
+    # simple_stats = simple_statistics(emg_sig)
 
     # EMG features from biosppy, not sure this is very helpful
     # For some reason, only works if I pass in double the sampling rate of 128Hz
@@ -135,7 +136,7 @@ def process_EMG(emg_sig, fs=128):
     # sampling frequency, could upsample?
 
     # GEt the total power of signal
-    sig_pow = np.sum(scipy.signal.periodigram(emg_sig)[1])
+    # sig_pow = np.sum(scipy.signal.periodogram(emg_sig)[1])
 
     # This might be good to use :
     # Peak Features
@@ -147,4 +148,4 @@ def process_EMG(emg_sig, fs=128):
     # [pwmean,pwstd,pwmax,pwmin] = simple_statistics(pwid)
 
     # return np.array([std,maxv,minv,maxHFD, kurt,sk,ppmean,ppstd,ppmin,pwmean,pwstd,pwmax,pwmin])
-    return np.array([*simple_stats, sig_pow])
+    return process_EEG(emg_sig, fs=fs)
