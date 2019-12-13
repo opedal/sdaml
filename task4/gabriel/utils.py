@@ -9,6 +9,8 @@ from tqdm import tqdm_notebook as tqdm
 import tensorflow as tf
 import pyeeg
 import csv
+from tqdm import tqdm
+import itertools
 
 from scipy import signal
 from scipy.signal import (welch, medfilt, wiener,savgol_filter)
@@ -37,6 +39,7 @@ from scipy.signal import find_peaks,peak_prominences,peak_widths,periodogram
 from scipy.stats import kurtosis,skew
 import yasa
 from sklearn.utils.class_weight import compute_class_weight
+from multipledispatch import dispatch
 
 def load_data():
     print("Loading xtrain...")
@@ -85,8 +88,6 @@ def simple_statistics(sig, fs=128):
                 np.max(sig), np.min(sig), float(kurtosis(sig)),
                 float(skew(sig))])
 
-
-
 def power_features(sig, fs=128):
     """ TESTED for (nxd) matrix input, returns (nxk) = (nx35) matrix output
 
@@ -101,6 +102,7 @@ def power_features(sig, fs=128):
     g1 = simple_statistics(gamma.T)
     return np.concatenate((ts1, al1, ah1, b1, g1), axis=1)
 
+@dispatch(pd.core.frame.DataFrame)
 def andreas_power_features(eeg_signal, fs=128):
     for i in (np.arange(eeg_signal.shape[0] / 100) + 1):
         if i == 1:
@@ -112,8 +114,24 @@ def andreas_power_features(eeg_signal, fs=128):
     df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
     return np.array(df)
 
+@dispatch(np.ndarray)
+def andreas_power_features(eeg_signal, fs=128):
+    for i in (np.arange(eeg_signal.shape[0] / 100) + 1):
+        if i == 1:
+            df = yasa.bandpower(eeg_signal[0:int(100*i),:], sf=fs)
+        else:
+            df = df.append(yasa.bandpower(eeg_signal[int(100*(i-1)):int(100*i),:], sf=fs))
+
+    df = df.set_index(np.arange(eeg_signal.shape[0]))
+    df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
+    return np.array(df)
+
 def peak_features(sig, fs=128):
     return
+
+def total_power(sig, fs=128):
+    mse = ((sig - np.mean(sig, axis=1))**2).mean(axis=1)
+    return mse
 
 def process_EEG(eeg_sig, fs=128):
     """ # TODO: Properly join these three matrices, concat is not the proper way"""
@@ -148,4 +166,99 @@ def process_EMG(emg_sig, fs=128):
     # [pwmean,pwstd,pwmax,pwmin] = simple_statistics(pwid)
 
     # return np.array([std,maxv,minv,maxHFD, kurt,sk,ppmean,ppstd,ppmin,pwmean,pwstd,pwmax,pwmin])
-    return process_EEG(emg_sig, fs=fs)
+    eeg_ = process_EEG(emg_sig, fs=fs)
+    return eeg_
+
+def losocv(eeg1, eeg2, emg, y, model, fs=128):
+    """Leave one subject out cross validation"""
+
+    epochs = 21600
+    num_sub = 3
+    # Indices of the subjects
+    sub_indices = [np.arange(0, epochs), np.arange(epochs, epochs*2),np.arange(epochs*2, epochs*3)]
+    res = []
+
+    for i in tqdm(range(len(sub_indices))):
+
+        # For the ith iteration, select as trainin the sub_indices other than those at index i for train_index
+        train_index = np.concatenate([sub_indices[(i+1)%num_sub], sub_indices[(i+2)%num_sub]])
+        eeg1_train = eeg1[train_index]
+        eeg2_train = eeg2[train_index]
+        emg_train = emg[train_index]
+        y_train = y[train_index]
+
+        # The test subject is the one at index i
+        test_index = sub_indices[i]
+        eeg1_test = eeg1[test_index]
+        eeg2_test = eeg2[test_index]
+        emg_test = emg[test_index]
+        y_test = y[test_index]
+
+        model.fit(x_train, y_train)
+        y_pred = model.predict(xtest)
+        res.append(sklearn.metrics.balanced_accuracy_score(y_test, y_pred))
+    return res
+
+def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
+    """Leave one subject out cross validation for the CRF model becasuse it requires
+    special datahandling. Input should be a Pandas Dataframe."""
+
+    epochs = 21600
+    num_sub = 3
+    # Indices of the subjects
+    sub_indices = [np.arange(0, epochs), np.arange(epochs, epochs*2),np.arange(epochs*2, epochs*3)]
+    res = []
+
+    for i in tqdm(range(len(sub_indices))):
+
+        # For the ith iteration, select as trainin the sub_indices other than those at index i for train_index
+        train_index = np.concatenate([sub_indices[(i+1)%num_sub], sub_indices[(i+2)%num_sub]])
+        eeg1_train = eeg1.values[train_index]
+        eeg2_train = eeg2.values[train_index]
+        emg_train = emg.values[train_index]
+        y_train = y.values[train_index]
+
+        # The test subject is the one at index i
+        test_index = sub_indices[i]
+        eeg1_test = eeg1.values[test_index]
+        eeg2_test = eeg2.values[test_index]
+        emg_test = emg.values[test_index]
+        y_test = y.values[test_index]
+
+        # CRF Model Preprocessing
+        eeg1_ = process_EEG(eeg1_train)
+        eeg2_ = process_EEG(eeg2_train)
+        emg_ = process_EMG(emg_train)
+        xtrain_ = np.concatenate((eeg1_, eeg2_, emg_), axis=1)
+        ytrain_classes = np.reshape(y_train, (y_train.shape[0],))
+        ytrain_ = y_train
+
+        eeg1_ = process_EEG(eeg1_test)
+        eeg2_ = process_EEG(eeg2_test)
+        emg_ = process_EEG(emg_test)
+        xtest_ = np.concatenate((eeg1_, eeg2_, emg_), axis=1)
+        ytest_ = y_test
+
+        xtrain_crf = np.reshape(xtrain_, (2, -1, xtrain_.shape[1])) # Reshape so that it works with CRF
+        ytrain_crf = np.reshape(ytrain_, (2, -1)) -1 # Reshape so that it works with CRF
+
+        # CRF Model fitting:
+        classes = np.unique(ytrain_)
+        weights_crf = compute_class_weight("balanced", list(classes), list(ytrain_classes))
+        weights_crf[0] = weights_crf[0]+weight_shift+1
+        weights_crf[1] = weights_crf[1]+weight_shift
+
+        model = ChainCRF(class_weight=weights_crf)
+        ssvm = OneSlackSSVM(model=model, C=0.5, max_iter=2000)
+        ssvm.fit(xtrain_crf, ytrain_crf)
+
+        # Test on the third guy
+        xtest_crf = np.reshape(xtest_, (1, -1, xtest_.shape[1]))
+        ytest_crf = np.reshape(ytest_, (1, -1)) -1
+        y_pred_crf = ssvm.predict(xtest_crf)
+        y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
+
+        resy = sklearn.metrics.balanced_accuracy_score(ytest_, y_pred_crf)
+        res.append(resy)
+        print("BMAC:", resy )
+    return res
