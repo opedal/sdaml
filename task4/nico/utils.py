@@ -209,7 +209,7 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
     sub_indices = [np.arange(0, epochs), np.arange(epochs, epochs*2),np.arange(epochs*2, epochs*3)]
     res = []
 
-    for i in tqdm(range(len(sub_indices))):
+    for i in range(len(sub_indices)):
 
         # For the ith iteration, select as trainin the sub_indices other than those at index i for train_index
         train_index = np.concatenate([sub_indices[(i+1)%num_sub], sub_indices[(i+2)%num_sub]])
@@ -260,5 +260,4 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
 
         resy = sklearn.metrics.balanced_accuracy_score(ytest_, y_pred_crf)
         res.append(resy)
-        print("BMAC:", resy )
     return res
