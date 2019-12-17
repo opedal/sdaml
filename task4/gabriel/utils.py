@@ -4,6 +4,7 @@ import sys
 import os
 import pandas as pd
 import numpy as np
+import numpy
 import random as rn
 from tqdm import tqdm_notebook as tqdm
 import tensorflow as tf
@@ -41,6 +42,10 @@ import yasa
 from sklearn.utils.class_weight import compute_class_weight
 from multipledispatch import dispatch
 
+# TODO:
+# 1. Add proper EMG features (total power etc?)
+# 2. Add cleaned peak features
+
 def load_data():
     print("Loading xtrain...")
     xtrain_eeg1 = pd.read_csv("train_eeg1.csv").drop("Id", axis = 1)
@@ -65,19 +70,10 @@ def make_submission(filename, predictions):
     sample["y"] = predictions
     sample.to_csv(filename, index= False)
 
-# TODO:
-# 1. Test simple stats (input ndarray or dataframe, output ndarray) x
-# 2. Test power features (input ndarray or dataframe, output ndarray) x
-# 3. Run process_EEG with just those two, and run it on the CRF. See result. Should
-# be equal to or better than SVM. Also run it quickly on SVM.
-# 4. Add peak_features function to EEG
-# 5. Add EMG Processing
-# 6. Test with leave-one-subject-out cv
-
 def power_features(sig, fs=128):
     """ TESTED for (nxd) matrix input, returns (nxk) = (nx35) matrix output
 
-     Conclusion: Passing in signals separately is the same as passing them in together.
+     Conclusion: Passinzg in signals separately is the same as passing them in together.
 
      """
     [_, theta, alpha_low,alpha_high,beta, gamma]= eeg.get_power_features(signal=sig.T, sampling_rate=fs)
@@ -88,45 +84,40 @@ def power_features(sig, fs=128):
     g1 = simple_statistics(gamma.T)
     return np.concatenate((ts1, al1, ah1, b1, g1), axis=1)
 
+@dispatch(np.ndarray)
 def simple_statistics(sig, fs=128):
     """ TESTED for (nxd) matrix input """
     # Check if it is not a 1d array
-    if (len(sig.shape) > 1) and (sig.shape[1]!=1):
-        return np.array([np.mean(sig, axis=1), np.median(sig, axis=1),
-                    np.std(sig, axis=1), np.max(sig, axis=1),
-                    np.min(sig, axis=1), kurtosis(sig, axis=1),
-                    skew(sig, axis=1)]).T
-    else:
-        print("Not Tested with this input!")
-        return np.array([np.mean(sig), np.median(sig), np.std(sig),
-                np.max(sig), np.min(sig), float(kurtosis(sig)),
-                float(skew(sig))])
+    return np.array([np.mean(sig, axis=1), np.median(sig, axis=1),
+                np.std(sig, axis=1), np.max(sig, axis=1),
+                np.min(sig, axis=1), kurtosis(sig, axis=1),
+                skew(sig, axis=1)]).T
 
 @dispatch(pd.core.frame.DataFrame)
 def advanced_statistics(signal, fs=128):
-    K_boundary = 10         # to be tuned
-    t_fisher = 12          # to be tuned
-    d_fisher = 40          # to be tuned
-    features_num = 11
-    threshold =  0.0009
-    advanced_stats = np.zeros((signal.shape[0],features_num))
-    print("Gathering advanced statistics...")
-    for i in tqdm((np.arange(signal.shape[0]))):
-        feat_array = np.array([
-                               pyeeg.fisher_info(signal.iloc[i,:], t_fisher, d_fisher),
-                               pyeeg.pfd(signal.iloc[i,:]),
-                               pyeeg.dfa(signal.iloc[i,:]),
-                               pyeeg.hfd(signal.iloc[i,:], K_boundary),
-                               np.sum((abs(signal.iloc[i,:]) ** (-0.3)).values > 20),
-                               np.sum((abs(signal.iloc[i,:])).values > threshold),
-                               np.std(abs(signal.iloc[i,:].values) ** (0.05)),
-                               np.sqrt(np.mean(np.power(np.diff(signal.iloc[i,:].values), 2))),
-                               np.mean(np.abs(np.diff(signal.iloc[i,:].values))),
-                               np.mean(signal.iloc[i,:].values ** 5),
-                               np.sum(signal.iloc[i,:].values ** 2)
-                               ])
-        advanced_stats[i, :] = feat_array
-    return advanced_stats
+    # K_boundary = 10         # to be tuned
+    # t_fisher = 12          # to be tuned
+    # d_fisher = 40          # to be tuned
+    # features_num = 11
+    # threshold =  0.0009
+    # advanced_stats = np.zeros((signal.shape[0],features_num))
+    # print("Gathering advanced statistics...")
+    # for i in tqdm((np.arange(signal.shape[0]))):
+    #     feat_array = np.array([
+    #                            pyeeg.fisher_info(signal.iloc[i,:], t_fisher, d_fisher),
+    #                            pyeeg.pfd(signal.iloc[i,:]),
+    #                            pyeeg.dfa(signal.iloc[i,:]),
+    #                            pyeeg.hfd(signal.iloc[i,:], K_boundary),
+    #                            np.sum((abs(signal.iloc[i,:]) ** (-0.3)).values > 20),
+    #                            np.sum((abs(signal.iloc[i,:])).values > threshold),
+    #                            np.std(abs(signal.iloc[i,:].values) ** (0.05)),
+    #                            np.sqrt(np.mean(np.power(np.diff(signal.iloc[i,:].values), 2))),
+    #                            np.mean(np.abs(np.diff(signal.iloc[i,:].values))),
+    #                            np.mean(signal.iloc[i,:].values ** 5),
+    #                            np.sum(signal.iloc[i,:].values ** 2)
+    #                            ])
+    #     advanced_stats[i, :] = feat_array
+    return advanced_statistics(signal.values, fs=fs)
 
 @dispatch(np.ndarray)
 def advanced_statistics(signal, fs=128):
@@ -155,6 +146,32 @@ def advanced_statistics(signal, fs=128):
     return advanced_stats
 
 @dispatch(pd.core.frame.DataFrame)
+def vectorized_adv_stat(signal, fs=128):
+    return vectorized_adv_stat(signal.values, fs=128)
+
+@dispatch(np.ndarray)
+def vectorized_adv_stat(signal, fs=128):
+    K_boundary = 10         # to be tuned
+    t_fisher = 12          # to be tuned
+    d_fisher = 40          # to be tuned
+    features_num = 11
+    threshold =  0.0009
+    advanced_stats = np.zeros((signal.shape[0],features_num))
+    print("Gathering advanced statistics...")
+    feat_array = np.array([
+                           pfd(signal),
+                           hfd(signal, K_boundary),
+                           np.sum((np.power(np.abs(signal),(-0.3)) > 20), axis=1),
+                           np.sum((np.abs(signal)) > threshold, axis=1),
+                           np.std(np.power(np.abs(signal),(0.05)), axis=1),
+                           np.sqrt(np.mean(np.power(np.diff(signal, axis=1), 2), axis=1)),
+                           np.mean(np.abs(np.diff(signal, axis=1)), axis=1),
+                           np.mean(np.power(signal, 5), axis=1),
+                           np.sum(np.power(signal, 2), axis=1)
+                           ]).T
+    return feat_array
+
+@dispatch(pd.core.frame.DataFrame)
 def andreas_power_features(eeg_signal, fs=128):
     for i in (np.arange(eeg_signal.shape[0] / 100) + 1):
         if i == 1:
@@ -178,14 +195,22 @@ def andreas_power_features(eeg_signal, fs=128):
     df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
     return np.array(df)
 
+@dispatch(np.ndarray)
 def peak_statistics(sig, fs=128):
-    [peaks1,_] = find_peaks(sig)
-    pprom1 = peak_prominences(sig,peaks1)[0]
-    contour_heights1 = sig[peaks1] - pprom1
-    pwid1 = peak_widths(sig,peaks1,rel_height=0.4)[0]
-    [ppmean1,ppstd1,_,ppmin1] = StatFeature(pprom1)
-    [pwmean1,pwstd1,pwmax1,pwmin1] = StatFeature(pwid1)
-    return
+    Rprom_arr = np.zeros([])
+    Rwidth_arr = np.array([])
+    res = np.zeros((sig.shape[0], 7))
+    for i in tqdm((np.arange(sig.shape[0]))):
+        print("I:", i)
+        RRpeaks = find_peaks(sig[i, :])[0]
+        Rprom = peak_prominences(sig[i, :], RRpeaks)[0]
+        Rprom = np.reshape(Rprom, (-1, 1))
+        Rwidth = peak_widths(sig[i, :], RRpeaks, rel_height=0.4)[0]
+        Rwidth = np.reshape(Rwidth, (-1, 1))
+        import pdb; pdb.set_trace()
+        res = np.vstack(res, np.concatenate((simple_statistics(Rprom_arr, fs=128), simple_statistics(Rwidth_arr, fs=128)), axis=1))
+    return res[1:]
+
 
 def total_power(sig, fs=128):
     # mse = ((sig - np.mean(sig, axis=1))**2).mean(axis=1)
@@ -195,13 +220,13 @@ def process_EEG(eeg_sig, fs=128):
     """ # TODO: Properly join these three matrices, concat is not the proper way"""
     simple_stats = simple_statistics(eeg_sig, fs=fs)
     power_feats = andreas_power_features(eeg_sig, fs=fs)
-    advanced_feats = advanced_statistics(eeg_sig, fs=fs)
+    advanced_feats = vectorized_adv_stat(eeg_sig, fs=fs)
     return np.concatenate((simple_stats, power_feats, advanced_feats), axis=1)
 
 def process_EMG(emg_sig, fs=128):
     eeg_ = process_EEG(emg_sig, fs=fs)
-    poww = total_power(emg_sig, fs=fs)
-    return np.concatenate((eeg_, poww), axis=1)
+    # poww = total_power(emg_sig, fs=fs)
+    return eeg_
 
 def losocv(eeg1, eeg2, emg, y, model, fs=128):
     """Leave one subject out cross validation"""
@@ -269,7 +294,7 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
 
         eeg1_ = process_EEG(eeg1_test)
         eeg2_ = process_EEG(eeg2_test)
-        emg_ = process_EEG(emg_test)
+        emg_ = process_EMG(emg_test)
         xtest_ = np.concatenate((eeg1_, eeg2_, emg_), axis=1)
         ytest_ = y_test
 
@@ -279,11 +304,11 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
         # CRF Model fitting:
         classes = np.unique(ytrain_)
         weights_crf = compute_class_weight("balanced", list(classes), list(ytrain_classes))
-        weights_crf[0] = weights_crf[0]+weight_shift+1
-        weights_crf[1] = weights_crf[1]+weight_shift
+        weights_crf[0] = weights_crf[0]+2.5*weight_shift
+        weights_crf[1] = weights_crf[1]+1.5*weight_shift
 
         model = ChainCRF(class_weight=weights_crf)
-        ssvm = OneSlackSSVM(model=model, C=0.5, max_iter=2000)
+        ssvm = OneSlackSSVM(model=model, C=C, max_iter=2000)
         ssvm.fit(xtrain_crf, ytrain_crf)
 
         # Test on the third guy
@@ -293,35 +318,95 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
         y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
 
         resy = sklearn.metrics.balanced_accuracy_score(ytest_, y_pred_crf)
+        print("Iteration, result:", i, resy)
         res.append(resy)
     return res
 
-@dispatch(np.ndarray)
+def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_shift=0, fs=128):
+
+    # For the ith iteration, select as trainin the sub_indices other than those at index i for train_index
+    eeg1_train = eeg1.values
+    eeg2_train = eeg2.values
+    emg_train = emg.values
+    y_train = y.values
+
+    # The test subject is the one at index i
+    eeg1_test = eeg1test.values
+    eeg2_test = eeg2test.values
+    emg_test = emgtest.values
+
+    # CRF Model Preprocessing
+    eeg1_ = process_EEG(eeg1_train)
+    eeg2_ = process_EEG(eeg2_train)
+    emg_ = process_EMG(emg_train)
+    xtrain_ = np.concatenate((eeg1_, eeg2_, emg_), axis=1)
+    ytrain_classes = np.reshape(y_train, (y_train.shape[0],))
+    ytrain_ = y_train
+
+    eeg1_ = process_EEG(eeg1_test)
+    eeg2_ = process_EEG(eeg2_test)
+    emg_ = process_EMG(emg_test)
+    xtest_ = np.concatenate((eeg1_, eeg2_, emg_), axis=1)
+
+    xtrain_crf = np.reshape(xtrain_, (2, -1, xtrain_.shape[1])) # Reshape so that it works with CRF
+    ytrain_crf = np.reshape(ytrain_, (2, -1)) -1 # Reshape so that it works with CRF
+
+    # CRF Model fitting:
+    classes = np.unique(ytrain_)
+    weights_crf = compute_class_weight("balanced", list(classes), list(ytrain_classes))
+    weights_crf[0] = weights_crf[0]+2.5*weight_shift
+    weights_crf[1] = weights_crf[1]+1.5*weight_shift
+
+    model = ChainCRF(class_weight=weights_crf)
+    ssvm = OneSlackSSVM(model=model, C=C, max_iter=2000)
+    ssvm.fit(xtrain_crf, ytrain_crf)
+
+    # Test on the third guy
+    xtest_crf = np.reshape(xtest_, (1, -1, xtest_.shape[1]))
+    y_pred_crf = ssvm.predict(xtest_crf)
+    y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
+    return y_pred_crf
+
+@dispatch(pd.core.frame.DataFrame, int)
 def hfd(X, Kmax):
-    """ VECTORIZED!!! NOT TESTED. X now a (nxd) matrix
+    return hfd(X.values, Kmax)
+
+@dispatch(np.ndarray, int)
+def hfd(X, Kmax):
+    """ VECTORIZED!!! TESTED: Matches the for loop output. Can test easily comparing
+    to the pyeeg.hfd() function. X now a (nxd) matrix.
     Compute Higuchi Fractal Dimension of a time series X. kmax
      is an HFD parameter
     """
     L = []
-    x = np.array([])
+    x = []
     N = X.shape[1]
-    for k in range(1, Kmax):
-        Lk = np.array([])
+    for k in tqdm(range(1, Kmax)):
+        # Lk = np.empty(shape=[0, ])
+        Lk = np.empty(shape=[X.shape[0], 1])
         for m in range(0, k):
             Lmk = 0
             for i in range(1, int(numpy.floor((N - m) / k))):
                 Lmk += np.abs(X[:, m + i * k] - X[:, m + i * k - k])
             Lmk = Lmk * (N - 1) / numpy.floor((N - m) / float(k)) / k
-            Lk = np.append(Lk, Lmk)
+            Lmk = np.reshape(Lmk, (Lmk.shape[0], 1))
+            Lk = np.hstack((Lk, Lmk))
+
+        # Remove that first placeholder column of zeros in Lk:
+        Lk = Lk[:, 1:]
         L.append(numpy.log(numpy.mean(Lk, axis=1)))
         x.append([numpy.log(float(1) / k), 1]) # Fix this!!!
 
     (p, _, _, _) = numpy.linalg.lstsq(x, L)
     return p[0]
 
+@dispatch(pd.core.frame.DataFrame)
+def pfd(X):
+    return pfd(X.values)
+
 @dispatch(np.ndarray)
-def pfd(X, D=None):
-    """VECTORIZED!!! NOTE TESTED.
+def pfd(X):
+    """VECTORIZED!!! TESTED, matches the 1d time series output. Now accepts (nxd) matrices as input
     Compute Petrosian Fractal Dimension of a time series from either two
     cases below:
         1. X, the time series of type list (default)
@@ -332,14 +417,7 @@ def pfd(X, D=None):
     because D may also be used by other functions whereas computing it here
     again will slow down.
     """
-    if D is None:
-        D = numpy.diff(X)
-        D = D.tolist()
-    N_delta = 0  # number of sign changes in derivative of the signal
-    for i in range(1, len(D)):
-        if D[i] * D[i - 1] < 0:
-            N_delta += 1
-    n = len(X)
-    return numpy.log10(n) / (
-        numpy.log10(n) + numpy.log10(n / n + 0.4 * N_delta)
-    )
+    n = X.shape[1]
+    diff = np.diff(X, axis=1)
+    N_delta = np.sum(diff[:, 1:-1] * diff[:, 0:-2] < 0, axis=1)
+    return np.log10(n) / (np.log10(n) + np.log10(n / (n + 0.4 * N_delta)))
