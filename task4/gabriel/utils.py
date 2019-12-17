@@ -74,6 +74,20 @@ def make_submission(filename, predictions):
 # 5. Add EMG Processing
 # 6. Test with leave-one-subject-out cv
 
+def power_features(sig, fs=128):
+    """ TESTED for (nxd) matrix input, returns (nxk) = (nx35) matrix output
+
+     Conclusion: Passing in signals separately is the same as passing them in together.
+
+     """
+    [_, theta, alpha_low,alpha_high,beta, gamma]= eeg.get_power_features(signal=sig.T, sampling_rate=fs)
+    ts1 = simple_statistics(theta.T)
+    al1 = simple_statistics(alpha_low.T)
+    ah1 = simple_statistics(alpha_high.T)
+    b1 = simple_statistics(beta.T)
+    g1 = simple_statistics(gamma.T)
+    return np.concatenate((ts1, al1, ah1, b1, g1), axis=1)
+
 def simple_statistics(sig, fs=128):
     """ TESTED for (nxd) matrix input """
     # Check if it is not a 1d array
@@ -88,19 +102,57 @@ def simple_statistics(sig, fs=128):
                 np.max(sig), np.min(sig), float(kurtosis(sig)),
                 float(skew(sig))])
 
-def power_features(sig, fs=128):
-    """ TESTED for (nxd) matrix input, returns (nxk) = (nx35) matrix output
+@dispatch(pd.core.frame.DataFrame)
+def advanced_statistics(signal, fs=128):
+    K_boundary = 10         # to be tuned
+    t_fisher = 12          # to be tuned
+    d_fisher = 40          # to be tuned
+    features_num = 11
+    threshold =  0.0009
+    advanced_stats = np.zeros((signal.shape[0],features_num))
+    print("Gathering advanced statistics...")
+    for i in tqdm((np.arange(signal.shape[0]))):
+        feat_array = np.array([
+                               pyeeg.fisher_info(signal.iloc[i,:], t_fisher, d_fisher),
+                               pyeeg.pfd(signal.iloc[i,:]),
+                               pyeeg.dfa(signal.iloc[i,:]),
+                               pyeeg.hfd(signal.iloc[i,:], K_boundary),
+                               np.sum((abs(signal.iloc[i,:]) ** (-0.3)).values > 20),
+                               np.sum((abs(signal.iloc[i,:])).values > threshold),
+                               np.std(abs(signal.iloc[i,:].values) ** (0.05)),
+                               np.sqrt(np.mean(np.power(np.diff(signal.iloc[i,:].values), 2))),
+                               np.mean(np.abs(np.diff(signal.iloc[i,:].values))),
+                               np.mean(signal.iloc[i,:].values ** 5),
+                               np.sum(signal.iloc[i,:].values ** 2)
+                               ])
+        advanced_stats[i, :] = feat_array
+    return advanced_stats
 
-     Conclusion: Passing in signals separately is the same as passing them in together.
-
-     """
-    [_, theta, alpha_low,alpha_high,beta, gamma]= eeg.get_power_features(signal=sig.T, sampling_rate=fs)
-    ts1 = simple_statistics(theta.T)
-    al1 = simple_statistics(alpha_low.T)
-    ah1 = simple_statistics(alpha_high.T)
-    b1 = simple_statistics(beta.T)
-    g1 = simple_statistics(gamma.T)
-    return np.concatenate((ts1, al1, ah1, b1, g1), axis=1)
+@dispatch(np.ndarray)
+def advanced_statistics(signal, fs=128):
+    K_boundary = 10         # to be tuned
+    t_fisher = 12          # to be tuned
+    d_fisher = 40          # to be tuned
+    features_num = 11
+    threshold =  0.0009
+    advanced_stats = np.zeros((signal.shape[0],features_num))
+    print("Gathering advanced statistics...")
+    for i in tqdm((np.arange(signal.shape[0]))):
+        feat_array = np.array([
+                               pyeeg.fisher_info(signal[i,:], t_fisher, d_fisher),
+                               pyeeg.pfd(signal[i,:]),
+                               pyeeg.dfa(signal[i,:]),
+                               pyeeg.hfd(signal[i,:], K_boundary),
+                               np.sum((abs(signal[i,:]) ** (-0.3)) > 20),
+                               np.sum((abs(signal[i,:])) > threshold),
+                               np.std(abs(signal[i,:]) ** (0.05)),
+                               np.sqrt(np.mean(np.power(np.diff(signal[i,:]), 2))),
+                               np.mean(np.abs(np.diff(signal[i,:]))),
+                               np.mean(signal[i,:] ** 5),
+                               np.sum(signal[i,:] ** 2)
+                               ])
+        advanced_stats[i, :] = feat_array
+    return advanced_stats
 
 @dispatch(pd.core.frame.DataFrame)
 def andreas_power_features(eeg_signal, fs=128):
@@ -126,48 +178,30 @@ def andreas_power_features(eeg_signal, fs=128):
     df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
     return np.array(df)
 
-def peak_features(sig, fs=128):
+def peak_statistics(sig, fs=128):
+    [peaks1,_] = find_peaks(sig)
+    pprom1 = peak_prominences(sig,peaks1)[0]
+    contour_heights1 = sig[peaks1] - pprom1
+    pwid1 = peak_widths(sig,peaks1,rel_height=0.4)[0]
+    [ppmean1,ppstd1,_,ppmin1] = StatFeature(pprom1)
+    [pwmean1,pwstd1,pwmax1,pwmin1] = StatFeature(pwid1)
     return
 
 def total_power(sig, fs=128):
-    mse = ((sig - np.mean(sig, axis=1))**2).mean(axis=1)
-    return mse
+    # mse = ((sig - np.mean(sig, axis=1))**2).mean(axis=1)
+    return np.mean(np.power(sig, 2), axis=1)
 
 def process_EEG(eeg_sig, fs=128):
     """ # TODO: Properly join these three matrices, concat is not the proper way"""
-    # Statistical Features
     simple_stats = simple_statistics(eeg_sig, fs=fs)
-    # power_feats = power_features(eeg_sig, fs=fs)
     power_feats = andreas_power_features(eeg_sig, fs=fs)
-    # peak_feats = peak_features(eeg_sig, fs=fs)
-    return np.concatenate((simple_stats, power_feats), axis=1)
+    advanced_feats = advanced_statistics(eeg_sig, fs=fs)
+    return np.concatenate((simple_stats, power_feats, advanced_feats), axis=1)
 
 def process_EMG(emg_sig, fs=128):
-    # Statistical Features
-    # simple_stats = simple_statistics(emg_sig)
-
-    # EMG features from biosppy, not sure this is very helpful
-    # For some reason, only works if I pass in double the sampling rate of 128Hz
-    # [ts, filtered, onsets] = emg.emg(emg_sig, sampling_rate=2*128)
-    # onset_simple_stats = simple_statistics(np.diff(onsets))
-    # Did not yield very consistent onsets. I think the function requires a higher
-    # sampling frequency, could upsample?
-
-    # GEt the total power of signal
-    # sig_pow = np.sum(scipy.signal.periodogram(emg_sig)[1])
-
-    # This might be good to use :
-    # Peak Features
-    # [peaks,_] = find_peaks(raw_signal)
-    # pprom = peak_prominences(raw_signal,peaks)[0]
-    # contour_heights = raw_signal[peaks] - pprom
-    # pwid = peak_widths(raw_signal,peaks,rel_height=0.4)[0]
-    # [ppmean,ppstd,_,ppmin] = simple_statistics(pprom)
-    # [pwmean,pwstd,pwmax,pwmin] = simple_statistics(pwid)
-
-    # return np.array([std,maxv,minv,maxHFD, kurt,sk,ppmean,ppstd,ppmin,pwmean,pwstd,pwmax,pwmin])
     eeg_ = process_EEG(emg_sig, fs=fs)
-    return eeg_
+    poww = total_power(emg_sig, fs=fs)
+    return np.concatenate((eeg_, poww), axis=1)
 
 def losocv(eeg1, eeg2, emg, y, model, fs=128):
     """Leave one subject out cross validation"""
@@ -261,3 +295,51 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
         resy = sklearn.metrics.balanced_accuracy_score(ytest_, y_pred_crf)
         res.append(resy)
     return res
+
+@dispatch(np.ndarray)
+def hfd(X, Kmax):
+    """ VECTORIZED!!! NOT TESTED. X now a (nxd) matrix
+    Compute Higuchi Fractal Dimension of a time series X. kmax
+     is an HFD parameter
+    """
+    L = []
+    x = np.array([])
+    N = X.shape[1]
+    for k in range(1, Kmax):
+        Lk = np.array([])
+        for m in range(0, k):
+            Lmk = 0
+            for i in range(1, int(numpy.floor((N - m) / k))):
+                Lmk += np.abs(X[:, m + i * k] - X[:, m + i * k - k])
+            Lmk = Lmk * (N - 1) / numpy.floor((N - m) / float(k)) / k
+            Lk = np.append(Lk, Lmk)
+        L.append(numpy.log(numpy.mean(Lk, axis=1)))
+        x.append([numpy.log(float(1) / k), 1]) # Fix this!!!
+
+    (p, _, _, _) = numpy.linalg.lstsq(x, L)
+    return p[0]
+
+@dispatch(np.ndarray)
+def pfd(X, D=None):
+    """VECTORIZED!!! NOTE TESTED.
+    Compute Petrosian Fractal Dimension of a time series from either two
+    cases below:
+        1. X, the time series of type list (default)
+        2. D, the first order differential sequence of X (if D is provided,
+           recommended to speed up)
+    In case 1, D is computed using Numpy's difference function.
+    To speed up, it is recommended to compute D before calling this function
+    because D may also be used by other functions whereas computing it here
+    again will slow down.
+    """
+    if D is None:
+        D = numpy.diff(X)
+        D = D.tolist()
+    N_delta = 0  # number of sign changes in derivative of the signal
+    for i in range(1, len(D)):
+        if D[i] * D[i - 1] < 0:
+            N_delta += 1
+    n = len(X)
+    return numpy.log10(n) / (
+        numpy.log10(n) + numpy.log10(n / n + 0.4 * N_delta)
+    )
