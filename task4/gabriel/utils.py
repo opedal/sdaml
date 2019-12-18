@@ -139,7 +139,6 @@ def vectorized_adv_stat(signal, fs=128):
     d_fisher = 40          # to be tuned
     features_num = 11
     threshold =  0.0009
-    advanced_stats = np.zeros((signal.shape[0],features_num))
     # Missing fisher info and dfa
     feat_array = np.array([
                            fisher_info(signal, t_fisher, d_fisher),
@@ -153,6 +152,7 @@ def vectorized_adv_stat(signal, fs=128):
                            np.mean(np.power(signal, 5), axis=1),
                            np.sum(np.power(signal, 2), axis=1)
                            ]).T
+    feat_array = np.concatenate((feat_array, matrix_dfa(signal)), axis=1) # Concatenate the lengthy dfa calculatoin
     return feat_array
 
 @dispatch(pd.core.frame.DataFrame)
@@ -363,8 +363,7 @@ def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_sh
     y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
     return y_pred_crf
 
-# Functions to optimize the preprocessing
-
+# Optimized Fractal and Entropy functions
 @dispatch(np.ndarray, int)
 def hfd(X, Kmax):
     """ VECTORIZED!!! TESTED: Matches the for loop output. Can test easily comparing
@@ -438,12 +437,12 @@ def _embed(x, order=3, delay=1):
         Y[:, :, i] = x[:, i * delay:i * delay + Y.shape[1]]
     return Y
 
-@jit(float64[:]. nopython=True)
-def test_dfa(x):
+@jit(nopython=True)
+def matrix_dfa(x):
     dfa_ = np.zeros((x.shape[0],), dtype=np.float64)
     for i in (np.arange(x.shape[0])):
         dfa_[i] = _dfa(np.asarray(x[i], dtype=np.float64))
-    return dfa_
+    return np.reshape(dfa_, (-1, 1))
 
 @jit('UniTuple(float64, 2)(float64[:], float64[:])', nopython=True)
 def _linear_regression(x, y):
@@ -527,14 +526,3 @@ def _dfa(x):
     else:
         dfa, _ = _linear_regression(np.log(nvals), np.log(fluctuations))
     return dfa
-
-def detrended_fluctuation(x):
-    """
-    Detrended fluctuation analysis (DFA).
-    """
-    x = np.asarray(x, dtype=np.float64)
-    return _dfa(x)
-
-def run():
-    x = np.random.rand(64800, 524)
-    return test_dfa(x)
