@@ -211,6 +211,21 @@ def simple_power_features(eeg_signal, fs=128):
     print("Finished gathering simple power features")
     return power_stats
 
+def power_statistics(signal, fs=128):
+    # Power Spectrum
+    w = np.hamming(signal.shape[1])
+    w, psd = periodogram(signal, window=w, detrend=False, axis=1)
+    advanced_stats = np.zeros((signal.shape[0],1))
+    for i in tqdm(range(signal.shape[0])):
+        _, _, FreqmaxP1, _, _, _ = findLFHF(psd[i, :], w)
+        advanced_stats[i, :] = FreqmaxP1
+    # # Peak Features
+    # [peaks1,_] = find_peaks(signal_1)
+    # pprom1 = peak_prominences(signal_1,peaks1)[0]
+    # contour_heights1 = signal_1[peaks1] - pprom1
+    # pwid1 = peak_widths(signal_1,peaks1,rel_height=0.4)[0]
+    return advanced_stats
+
 @dispatch(np.ndarray)
 def peak_statistics(sig, fs=128):
     Rprom_arr = np.zeros([])
@@ -227,6 +242,33 @@ def peak_statistics(sig, fs=128):
         res = np.vstack(res, np.concatenate((simple_statistics(Rprom_arr, fs=128), simple_statistics(Rwidth_arr, fs=128)), axis=1))
     return res[1:]
 
+def findLFHF(psd, w):
+    VLFpsd = VLFw = LFpsd = LFw = HFpsd = HFw = np.empty(0)
+    m = w.shape[0]
+
+    for i in range(0, m):
+        if w[i] <= 0.05:
+            VLFpsd = np.append(VLFpsd, psd[i])
+            VLFw = np.append(VLFw, w[i])
+        if w[i] > 0.05 and w[i] <= 0.15:
+            LFpsd = np.append(LFpsd, psd[i])
+            LFw = np.append(LFw, w[i])
+        if w[i] > 0.15 and w[i] <= 0.4:
+            HFpsd = np.append(HFpsd, psd[i])
+            HFw = np.append(HFw, w[i])
+
+    LF = integrate.trapz(LFw, LFpsd) / (integrate.trapz(w, psd) - integrate.trapz(VLFw, VLFpsd))
+    HF = integrate.trapz(HFw, HFpsd) / (integrate.trapz(w, psd) - integrate.trapz(VLFw, VLFpsd))
+    LFHFratio = LF / HF
+    inter = LF / (LF + HF)
+    if HFpsd.size:
+        [maxHFD, maxIndex] = max((v, i) for i, v in enumerate(HFpsd))
+        FreqmaxP = HFw[maxIndex]
+    else:
+        maxHFD = 0
+        FreqmaxP = 0
+    return (LF, HF, FreqmaxP, maxHFD, LFHFratio, inter)
+
 def total_power(sig, fs=128):
     # mse = ((sig - np.mean(sig, axis=1))**2).mean(axis=1)
     return np.mean(np.power(sig, 2), axis=1)
@@ -235,6 +277,7 @@ def process_EEG(eeg_sig, fs=128):
     """ # TODO: Properly join these three matrices, concat is not the proper way"""
     simple_stats = simple_statistics(eeg_sig, fs=fs)
     power_feats = andreas_power_features(eeg_sig, fs=fs)
+    # power_stats = power_statistics(eeg_sig, fs=fs)
     advanced_feats = vectorized_adv_stat(eeg_sig, fs=fs)
     return np.concatenate((simple_stats, power_feats, advanced_feats), axis=1)
 
