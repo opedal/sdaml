@@ -162,6 +162,7 @@ def vectorized_adv_stat(signal, fs=128):
     print("Gathering advanced statistics...")
     # Missing fisher info and dfa
     feat_array = np.array([
+                           fisher_info(signal, t_fisher, d_fisher),
                            pfd(signal),
                            hfd(signal, K_boundary),
                            np.sum((np.power(np.abs(signal),(-0.3)) > 20), axis=1),
@@ -369,10 +370,6 @@ def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_sh
     y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
     return y_pred_crf
 
-@dispatch(pd.core.frame.DataFrame, int)
-def hfd(X, Kmax):
-    return hfd(X.values, Kmax)
-
 @dispatch(np.ndarray, int)
 def hfd(X, Kmax):
     """ VECTORIZED!!! TESTED: Matches the for loop output. Can test easily comparing
@@ -402,10 +399,6 @@ def hfd(X, Kmax):
     (p, _, _, _) = numpy.linalg.lstsq(x, L)
     return p[0]
 
-@dispatch(pd.core.frame.DataFrame)
-def pfd(X):
-    return pfd(X.values)
-
 @dispatch(np.ndarray)
 def pfd(X):
     """VECTORIZED!!! TESTED, matches the 1d time series output. Now accepts (nxd) matrices as input
@@ -423,3 +416,29 @@ def pfd(X):
     diff = np.diff(X, axis=1)
     N_delta = np.sum(diff[:, 1:-1] * diff[:, 0:-2] < 0, axis=1)
     return np.log10(n) / (np.log10(n) + np.log10(n / (n + 0.4 * N_delta)))
+
+@dispatch(np.ndarray, int, int)
+def fisher_info(X, Tau=3, DE=1, W=None):
+    """ VECTORIZED, TESTED, gives approximate results but not exact. Compute SVD Entropy from either two cases below:
+    """
+    if W is None:
+        Y = _embed(X, Tau, DE)
+        W = numpy.linalg.svd(Y, compute_uv=0)
+        W = np.divide(W, np.reshape(np.sum(W, axis=1), (-1, 1)))  # normalize singular values
+    return -1 * np.sum(W * numpy.log(W), axis=1)
+
+@dispatch(np.ndarray, int, int)
+def _embed(x, order=3, delay=1):
+    """ VECTORIZED!! Kind of TESTED. Time-delay embedding. x is an (nxd) matrix
+    """
+    N = x.shape[1]
+    if order * delay > N:
+        raise ValueError("Error: order * delay should be lower than x.size")
+    if delay < 1:
+        raise ValueError("Delay has to be at least 1.")
+    if order < 2:
+        raise ValueError("Order has to be at least 2.")
+    Y = np.zeros((x.shape[0], N - (order - 1) * delay, order))
+    for i in range(order):
+        Y[:, :, i] = x[:, i * delay:i * delay + Y.shape[1]]
+    return Y # Tested
