@@ -43,8 +43,7 @@ from sklearn.utils.class_weight import compute_class_weight
 from multipledispatch import dispatch
 
 # TODO:
-# 0. Vectorize remaining advanced stats
-# 0.5. Check for bug in losocv
+# 0.
 # 1. Add proper EMG features (total power etc?)
 # 2. Add cleaned peak features
 
@@ -97,28 +96,6 @@ def simple_statistics(sig, fs=128):
 
 @dispatch(pd.core.frame.DataFrame)
 def advanced_statistics(signal, fs=128):
-    # K_boundary = 10         # to be tuned
-    # t_fisher = 12          # to be tuned
-    # d_fisher = 40          # to be tuned
-    # features_num = 11
-    # threshold =  0.0009
-    # advanced_stats = np.zeros((signal.shape[0],features_num))
-    # print("Gathering advanced statistics...")
-    # for i in tqdm((np.arange(signal.shape[0]))):
-    #     feat_array = np.array([
-    #                            pyeeg.fisher_info(signal.iloc[i,:], t_fisher, d_fisher),
-    #                            pyeeg.pfd(signal.iloc[i,:]),
-    #                            pyeeg.dfa(signal.iloc[i,:]),
-    #                            pyeeg.hfd(signal.iloc[i,:], K_boundary),
-    #                            np.sum((abs(signal.iloc[i,:]) ** (-0.3)).values > 20),
-    #                            np.sum((abs(signal.iloc[i,:])).values > threshold),
-    #                            np.std(abs(signal.iloc[i,:].values) ** (0.05)),
-    #                            np.sqrt(np.mean(np.power(np.diff(signal.iloc[i,:].values), 2))),
-    #                            np.mean(np.abs(np.diff(signal.iloc[i,:].values))),
-    #                            np.mean(signal.iloc[i,:].values ** 5),
-    #                            np.sum(signal.iloc[i,:].values ** 2)
-    #                            ])
-    #     advanced_stats[i, :] = feat_array
     return advanced_statistics(signal.values, fs=fs)
 
 @dispatch(np.ndarray)
@@ -159,7 +136,6 @@ def vectorized_adv_stat(signal, fs=128):
     features_num = 11
     threshold =  0.0009
     advanced_stats = np.zeros((signal.shape[0],features_num))
-    print("Gathering advanced statistics...")
     # Missing fisher info and dfa
     feat_array = np.array([
                            fisher_info(signal, t_fisher, d_fisher),
@@ -199,6 +175,18 @@ def andreas_power_features(eeg_signal, fs=128):
     df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
     return np.array(df)
 
+@dispatch(pd.core.frame.DataFrame)
+def simple_power_features(eeg_signal, fs=128):
+    return simple_power_features(eeg_signal.values, fs=fs)
+
+@dispatch(np.ndarray)
+def simple_power_features(eeg_signal, fs=128):
+    print("SIZE:", eeg_signal.shape)
+    df = yasa.bandpower(eeg_signal, sf=fs)
+    df = df.set_index(np.arange(eeg_signal.shape[0]))
+    df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
+    return np.array(df)
+
 @dispatch(np.ndarray)
 def peak_statistics(sig, fs=128):
     Rprom_arr = np.zeros([])
@@ -227,9 +215,10 @@ def process_EEG(eeg_sig, fs=128):
     return np.concatenate((simple_stats, power_feats, advanced_feats), axis=1)
 
 def process_EMG(emg_sig, fs=128):
-    simple_stats = simple_statistics(eeg_sig, fs=fs)
-    advanced_feats = vectorized_adv_stat(eeg_sig, fs=fs)
-    return np.concatenate((simple_stats, advanced_feats), axis=1)
+    # simple_stats = simple_statistics(emg_sig, fs=fs)
+    # advanced_feats = vectorized_adv_stat(emg_sig, fs=fs)
+    # return np.concatenate((simple_stats, advanced_feats), axis=1)
+    return process_EEG(emg_sig, fs=fs)
 
 def losocv(eeg1, eeg2, emg, y, model, fs=128):
     """Leave one subject out cross validation"""
@@ -295,10 +284,10 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
         ytrain_classes = np.reshape(y_train, (y_train.shape[0],))
         ytrain_ = y_train
 
-        eeg1_ = process_EEG(eeg1_test)
-        eeg2_ = process_EEG(eeg2_test)
-        emg_ = process_EMG(emg_test)
-        xtest_ = np.concatenate((eeg1_, eeg2_, emg_), axis=1)
+        eeg1_t = process_EEG(eeg1_test)
+        eeg2_t = process_EEG(eeg2_test)
+        emg_t = process_EMG(emg_test)
+        xtest_ = np.concatenate((eeg1_t, eeg2_t, emg_t), axis=1)
         ytest_ = y_test
 
         xtrain_crf = np.reshape(xtrain_, (2, -1, xtrain_.shape[1])) # Reshape so that it works with CRF
@@ -351,8 +340,8 @@ def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_sh
     emg_ = process_EMG(emg_test)
     xtest_ = np.concatenate((eeg1_, eeg2_, emg_), axis=1)
 
-    xtrain_crf = np.reshape(xtrain_, (2, -1, xtrain_.shape[1])) # Reshape so that it works with CRF
-    ytrain_crf = np.reshape(ytrain_, (2, -1)) -1 # Reshape so that it works with CRF
+    xtrain_crf = np.reshape(xtrain_, (3, -1, xtrain_.shape[1])) # Reshape so that it works with CRF
+    ytrain_crf = np.reshape(ytrain_, (3, -1)) -1 # Reshape so that it works with CRF
 
     # CRF Model fitting:
     classes = np.unique(ytrain_)
@@ -365,7 +354,7 @@ def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_sh
     ssvm.fit(xtrain_crf, ytrain_crf)
 
     # Test on the third guy
-    xtest_crf = np.reshape(xtest_, (1, -1, xtest_.shape[1]))
+    xtest_crf = np.reshape(xtest_, (2, -1, xtest_.shape[1]))
     y_pred_crf = ssvm.predict(xtest_crf)
     y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
     return y_pred_crf
@@ -380,7 +369,7 @@ def hfd(X, Kmax):
     L = []
     x = []
     N = X.shape[1]
-    for k in tqdm(range(1, Kmax)):
+    for k in (range(1, Kmax)):
         # Lk = np.empty(shape=[0, ])
         Lk = np.empty(shape=[X.shape[0], 1])
         for m in range(0, k):
@@ -441,4 +430,4 @@ def _embed(x, order=3, delay=1):
     Y = np.zeros((x.shape[0], N - (order - 1) * delay, order))
     for i in range(order):
         Y[:, :, i] = x[:, i * delay:i * delay + Y.shape[1]]
-    return Y # Tested
+    return Y
