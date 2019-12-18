@@ -46,8 +46,6 @@ import entropy
 from math import log, floor
 
 # TODO:
-# 0. Vectorize DFA
-# 1. Add proper EMG features (total power etc?)
 # 2. Add cleaned peak features
 
 def load_data():
@@ -95,7 +93,7 @@ def simple_statistics(sig, fs=128):
     return np.array([np.mean(sig, axis=1), np.median(sig, axis=1),
                 np.std(sig, axis=1), np.max(sig, axis=1),
                 np.min(sig, axis=1), kurtosis(sig, axis=1),
-                skew(sig, axis=1)]).T
+                skew(sig, axis=1), np.sum(np.abs(sig), axis=1)]).T
 
 @dispatch(pd.core.frame.DataFrame)
 def advanced_statistics(signal, fs=128):
@@ -185,11 +183,33 @@ def simple_power_features(eeg_signal, fs=128):
 
 @dispatch(np.ndarray)
 def simple_power_features(eeg_signal, fs=128):
-    print("SIZE:", eeg_signal.shape)
-    df = yasa.bandpower(eeg_signal, sf=fs)
-    df = df.set_index(np.arange(eeg_signal.shape[0]))
-    df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
-    return np.array(df)
+    DELTA_WAVE = [1, 4]
+    THETA_WAVE = [4, 8]
+    ALPHA_WAVE = [7.5, 12.5]
+    BETA_WAVE = [13, 30]
+    TOTAL_ENERGY = [0, 64]
+    features_num = 8
+    power_stats = np.zeros((eeg_signal.shape[0],features_num))
+    print("Gathering simple power features...")
+    for i in tqdm(range(eeg_signal.shape[0])):
+        delta = bandpower(eeg_signal[i, :], DELTA_WAVE)
+        theta = bandpower(eeg_signal[i, :], THETA_WAVE)
+        alpha = bandpower(eeg_signal[i, :], ALPHA_WAVE)
+        beta = bandpower(eeg_signal[i, :], BETA_WAVE)
+        total_energy = bandpower(eeg_signal[i, :], TOTAL_ENERGY)
+        feats_array = np.array([
+                                delta,
+                                theta,
+                                alpha,
+                                beta,
+                                delta/total_energy,
+                                theta/total_energy,
+                                alpha/total_energy,
+                                beta/total_energy
+                                ])
+        power_stats[i, :] = feats_array
+    print("Finished gathering simple power features")
+    return power_stats
 
 @dispatch(np.ndarray)
 def peak_statistics(sig, fs=128):
@@ -218,11 +238,17 @@ def process_EEG(eeg_sig, fs=128):
     advanced_feats = vectorized_adv_stat(eeg_sig, fs=fs)
     return np.concatenate((simple_stats, power_feats, advanced_feats), axis=1)
 
-def process_EMG(emg_sig, fs=128):
-    # simple_stats = simple_statistics(emg_sig, fs=fs)
-    # advanced_feats = vectorized_adv_stat(emg_sig, fs=fs)
-    # return np.concatenate((simple_stats, advanced_feats), axis=1)
-    return process_EEG(emg_sig, fs=fs)
+def process_EMG(signal, fs=128):
+    simple_stats = simple_statistics(signal, fs=fs)
+    feat_array = np.array([
+                          np.median(np.power(signal, 2), axis=1),
+                          np.median(np.abs(np.diff(signal, axis=1)), axis=1),
+                          np.std(np.abs(np.diff(signal, axis=1)), axis=1),
+                          np.sum(np.abs(np.diff(signal, axis=1)), axis=1),
+                          np.mean(np.power(np.diff(signal, axis=1), 2), axis=1),
+                          np.std(np.abs(signal), axis=1)
+                        ]).T
+    return np.concatenate((simple_stats, feat_array), axis=1)
 
 def losocv(eeg1, eeg2, emg, y, model, fs=128):
     """Leave one subject out cross validation"""
@@ -254,7 +280,7 @@ def losocv(eeg1, eeg2, emg, y, model, fs=128):
         res.append(sklearn.metrics.balanced_accuracy_score(y_test, y_pred))
     return res
 
-def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
+def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=0, fs=128):
     """Leave one subject out cross validation for the CRF model becasuse it requires
     special datahandling. Input should be a Pandas Dataframe."""
 
@@ -300,8 +326,8 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=1.5, fs=128):
         # CRF Model fitting:
         classes = np.unique(ytrain_)
         weights_crf = compute_class_weight("balanced", list(classes), list(ytrain_classes))
-        weights_crf[0] = weights_crf[0]+2.5*weight_shift
-        weights_crf[1] = weights_crf[1]+1.5*weight_shift
+        weights_crf[0] = weights_crf[0]+(2.5*weight_shift)
+        weights_crf[1] = weights_crf[1]+(1.5*weight_shift)
 
         model = ChainCRF(class_weight=weights_crf)
         ssvm = OneSlackSSVM(model=model, C=C, max_iter=2000)
