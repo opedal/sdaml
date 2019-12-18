@@ -43,6 +43,8 @@ from sklearn.utils.class_weight import compute_class_weight
 from multipledispatch import dispatch
 
 # TODO:
+# 0. Vectorize remaining advanced stats
+# 0.5. Check for bug in losocv
 # 1. Add proper EMG features (total power etc?)
 # 2. Add cleaned peak features
 
@@ -158,6 +160,7 @@ def vectorized_adv_stat(signal, fs=128):
     threshold =  0.0009
     advanced_stats = np.zeros((signal.shape[0],features_num))
     print("Gathering advanced statistics...")
+    # Missing fisher info and dfa
     feat_array = np.array([
                            pfd(signal),
                            hfd(signal, K_boundary),
@@ -211,7 +214,6 @@ def peak_statistics(sig, fs=128):
         res = np.vstack(res, np.concatenate((simple_statistics(Rprom_arr, fs=128), simple_statistics(Rwidth_arr, fs=128)), axis=1))
     return res[1:]
 
-
 def total_power(sig, fs=128):
     # mse = ((sig - np.mean(sig, axis=1))**2).mean(axis=1)
     return np.mean(np.power(sig, 2), axis=1)
@@ -224,9 +226,9 @@ def process_EEG(eeg_sig, fs=128):
     return np.concatenate((simple_stats, power_feats, advanced_feats), axis=1)
 
 def process_EMG(emg_sig, fs=128):
-    eeg_ = process_EEG(emg_sig, fs=fs)
-    # poww = total_power(emg_sig, fs=fs)
-    return eeg_
+    simple_stats = simple_statistics(eeg_sig, fs=fs)
+    advanced_feats = vectorized_adv_stat(eeg_sig, fs=fs)
+    return np.concatenate((simple_stats, advanced_feats), axis=1)
 
 def losocv(eeg1, eeg2, emg, y, model, fs=128):
     """Leave one subject out cross validation"""
