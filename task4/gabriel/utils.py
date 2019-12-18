@@ -41,9 +41,12 @@ from scipy.stats import kurtosis,skew
 import yasa
 from sklearn.utils.class_weight import compute_class_weight
 from multipledispatch import dispatch
+from numba import jit
+import entropy
+from math import log, floor
 
 # TODO:
-# 0.
+# 0. Vectorize DFA
 # 1. Add proper EMG features (total power etc?)
 # 2. Add cleaned peak features
 
@@ -98,7 +101,8 @@ def simple_statistics(sig, fs=128):
 def advanced_statistics(signal, fs=128):
     return advanced_statistics(signal.values, fs=fs)
 
-@dispatch(np.ndarray)
+# @dispatch(np.ndarray)
+@jit(nopython=True)
 def advanced_statistics(signal, fs=128):
     K_boundary = 10         # to be tuned
     t_fisher = 12          # to be tuned
@@ -359,6 +363,8 @@ def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_sh
     y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
     return y_pred_crf
 
+# Functions to optimize the preprocessing
+
 @dispatch(np.ndarray, int)
 def hfd(X, Kmax):
     """ VECTORIZED!!! TESTED: Matches the for loop output. Can test easily comparing
@@ -431,3 +437,104 @@ def _embed(x, order=3, delay=1):
     for i in range(order):
         Y[:, :, i] = x[:, i * delay:i * delay + Y.shape[1]]
     return Y
+
+@jit(float64[:]. nopython=True)
+def test_dfa(x):
+    dfa_ = np.zeros((x.shape[0],), dtype=np.float64)
+    for i in (np.arange(x.shape[0])):
+        dfa_[i] = _dfa(np.asarray(x[i], dtype=np.float64))
+    return dfa_
+
+@jit('UniTuple(float64, 2)(float64[:], float64[:])', nopython=True)
+def _linear_regression(x, y):
+    """Fast linear regression using Numba.
+    Parameters
+    ----------
+    x, y : ndarray, shape (n_times,)
+        Variables
+    Returns
+    -------
+    slope : float
+        Slope of 1D least-square regression.
+    intercept : float
+        Intercept
+    """
+    n_times = x.size
+    sx2 = 0
+    sx = 0
+    sy = 0
+    sxy = 0
+    for j in range(n_times):
+        sx2 += x[j] ** 2
+        sx += x[j]
+        sxy += x[j] * y[j]
+        sy += y[j]
+    den = n_times * sx2 - (sx ** 2)
+    num = n_times * sxy - sx * sy
+    slope = num / den
+    intercept = np.mean(y) - slope * np.mean(x)
+    return slope, intercept
+
+@jit('i8[:](f8, f8, f8)', nopython=True)
+def _log_n(min_n, max_n, factor):
+    """
+    Creates a list of integer values by successively multiplying a minimum
+    """
+    max_i = int(floor(log(1.0 * max_n / min_n) / log(factor)))
+    ns = [min_n]
+    for i in range(max_i + 1):
+        n = int(floor(min_n * (factor ** i)))
+        if n > ns[-1]:
+            ns.append(n)
+    return np.array(ns, dtype=np.int64)
+
+@jit('f8(f8[:])', nopython=True)
+def _dfa(x):
+    """
+    Utility function for detrended fluctuation analysis
+    """
+    N = len(x)
+    nvals = _log_n(4, 0.1 * N, 1.2)
+    walk = np.cumsum(x - x.mean())
+    fluctuations = np.zeros(len(nvals))
+
+    for i_n, n in enumerate(nvals):
+        d = np.reshape(walk[:N - (N % n)], (N // n, n))
+        ran_n = np.array([float(na) for na in range(n)])
+        d_len = len(d)
+        slope = np.empty(d_len)
+        intercept = np.empty(d_len)
+        trend = np.empty((d_len, ran_n.size))
+        for i in range(d_len):
+            slope[i], intercept[i] = _linear_regression(ran_n, d[i])
+            y = np.zeros_like(ran_n)
+            # Equivalent to np.polyval function
+            for p in [slope[i], intercept[i]]:
+                y = y * ran_n + p
+            trend[i, :] = y
+        # calculate standard deviation (fluctuation) of walks in d around trend
+        flucs = np.sqrt(np.sum((d - trend) ** 2, axis=1) / n)
+        # calculate mean fluctuation over all subsequences
+        fluctuations[i_n] = flucs.sum() / flucs.size
+
+    # Filter zero
+    nonzero = np.nonzero(fluctuations)[0]
+    fluctuations = fluctuations[nonzero]
+    nvals = nvals[nonzero]
+    if len(fluctuations) == 0:
+        # all fluctuations are zero => we cannot fit a line
+        dfa = np.nan
+    else:
+        dfa, _ = _linear_regression(np.log(nvals), np.log(fluctuations))
+    return dfa
+
+def detrended_fluctuation(x):
+    """
+    Detrended fluctuation analysis (DFA).
+    """
+    x = np.asarray(x, dtype=np.float64)
+    return _dfa(x)
+
+def run():
+    x = np.random.rand(64800, 524)
+    return test_dfa(x)
