@@ -45,8 +45,13 @@ from numba import jit
 import entropy
 from math import log, floor
 
+from keras.models import Sequential
+from keras.layers import LSTM, Dense
+from keras import backend as K
+
 # TODO:
-# 2. Add cleaned peak features
+# 2. Try new andreas pruned features
+# 3. Implement RNN with class weights
 
 def load_data():
     print("Loading xtrain...")
@@ -95,10 +100,6 @@ def simple_statistics(sig, fs=128):
                 np.min(sig, axis=1), kurtosis(sig, axis=1),
                 skew(sig, axis=1), np.sum(np.abs(sig), axis=1)]).T
 
-@dispatch(pd.core.frame.DataFrame)
-def advanced_statistics(signal, fs=128):
-    return advanced_statistics(signal.values, fs=fs)
-
 # @dispatch(np.ndarray)
 @jit(nopython=True)
 def advanced_statistics(signal, fs=128):
@@ -126,10 +127,6 @@ def advanced_statistics(signal, fs=128):
         advanced_stats[i, :] = feat_array
     return advanced_stats
 
-@dispatch(pd.core.frame.DataFrame)
-def vectorized_adv_stat(signal, fs=128):
-    return vectorized_adv_stat(signal.values, fs=128)
-
 @dispatch(np.ndarray)
 def vectorized_adv_stat(signal, fs=128):
     K_boundary = 10         # to be tuned
@@ -153,18 +150,6 @@ def vectorized_adv_stat(signal, fs=128):
     feat_array = np.concatenate((feat_array, matrix_dfa(signal)), axis=1) # Concatenate the lengthy dfa calculatoin
     return feat_array
 
-@dispatch(pd.core.frame.DataFrame)
-def andreas_power_features(eeg_signal, fs=128):
-    for i in (np.arange(eeg_signal.shape[0] / 100) + 1):
-        if i == 1:
-            df = yasa.bandpower(eeg_signal.iloc[0:int(100*i),:].values, sf=fs)
-        else:
-            df = df.append(yasa.bandpower(eeg_signal.iloc[int(100*(i-1)):int(100*i),:].values, sf=fs))
-
-    df = df.set_index(np.arange(eeg_signal.shape[0]))
-    df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
-    return np.array(df)
-
 @dispatch(np.ndarray)
 def andreas_power_features(eeg_signal, fs=128):
     for i in (np.arange(eeg_signal.shape[0] / 100) + 1):
@@ -176,10 +161,6 @@ def andreas_power_features(eeg_signal, fs=128):
     df = df.set_index(np.arange(eeg_signal.shape[0]))
     df = df.drop(columns = ["FreqRes","Relative"], axis = 1)
     return np.array(df)
-
-@dispatch(pd.core.frame.DataFrame)
-def simple_power_features(eeg_signal, fs=128):
-    return simple_power_features(eeg_signal.values, fs=fs)
 
 @dispatch(np.ndarray)
 def simple_power_features(eeg_signal, fs=128):
@@ -242,45 +223,57 @@ def peak_statistics(sig, fs=128):
         res = np.vstack(res, np.concatenate((simple_statistics(Rprom_arr, fs=128), simple_statistics(Rwidth_arr, fs=128)), axis=1))
     return res[1:]
 
-def findLFHF(psd, w):
-    VLFpsd = VLFw = LFpsd = LFw = HFpsd = HFw = np.empty(0)
-    m = w.shape[0]
+@dispatch(np.ndarray)
+def pruned_features(sig, fs=128):
+    # remove mean, median and kurtosis for eeg, and the 8th advanced stat
+    K_boundary = 10         # to be tuned
+    t_fisher = 12          # to be tuned
+    d_fisher = 40          # to be tuned
+    features_num = 11
+    threshold =  0.0009
+    simple_stats = np.array([
+                np.std(sig, axis=1), np.max(sig, axis=1),
+                np.min(sig, axis=1), skew(sig, axis=1),
+                np.sum(np.abs(sig), axis=1)]).T
+    power_feats = andreas_power_features(sig, fs=fs)
+    feat_array = np.array([
+                           fisher_info(sig, t_fisher, d_fisher),
+                           pfd(sig),
+                           hfd(sig, K_boundary),
+                           np.sum((np.power(np.abs(sig),(-0.3)) > 20), axis=1),
+                           np.sum((np.abs(sig)) > threshold, axis=1),
+                           np.std(np.power(np.abs(sig),(0.05)), axis=1),
+                           np.sqrt(np.mean(np.power(np.diff(sig, axis=1), 2), axis=1)),
+                           np.mean(np.power(sig, 5), axis=1),
+                           np.sum(np.power(sig, 2), axis=1)
+                           ]).T # Removed the 8th advanced stat
+    feat_array = np.concatenate((feat_array, matrix_dfa(sig)), axis=1) # Concatenate the lengthy dfa calculatoin
 
-    for i in range(0, m):
-        if w[i] <= 0.05:
-            VLFpsd = np.append(VLFpsd, psd[i])
-            VLFw = np.append(VLFw, w[i])
-        if w[i] > 0.05 and w[i] <= 0.15:
-            LFpsd = np.append(LFpsd, psd[i])
-            LFw = np.append(LFw, w[i])
-        if w[i] > 0.15 and w[i] <= 0.4:
-            HFpsd = np.append(HFpsd, psd[i])
-            HFw = np.append(HFw, w[i])
-
-    LF = integrate.trapz(LFw, LFpsd) / (integrate.trapz(w, psd) - integrate.trapz(VLFw, VLFpsd))
-    HF = integrate.trapz(HFw, HFpsd) / (integrate.trapz(w, psd) - integrate.trapz(VLFw, VLFpsd))
-    LFHFratio = LF / HF
-    inter = LF / (LF + HF)
-    if HFpsd.size:
-        [maxHFD, maxIndex] = max((v, i) for i, v in enumerate(HFpsd))
-        FreqmaxP = HFw[maxIndex]
-    else:
-        maxHFD = 0
-        FreqmaxP = 0
-    return (LF, HF, FreqmaxP, maxHFD, LFHFratio, inter)
+    return np.concatenate((simple_stats, power_feats, feat_array), axis=1)
 
 def total_power(sig, fs=128):
     # mse = ((sig - np.mean(sig, axis=1))**2).mean(axis=1)
     return np.mean(np.power(sig, 2), axis=1)
 
+@dispatch(pd.core.frame.DataFrame)
+def process_EEG(eeg_sig, fs=128):
+    return process_EEG(eeg_sig.values, fs=fs)
+
+@dispatch(np.ndarray)
 def process_EEG(eeg_sig, fs=128):
     """ # TODO: Properly join these three matrices, concat is not the proper way"""
-    simple_stats = simple_statistics(eeg_sig, fs=fs)
-    power_feats = andreas_power_features(eeg_sig, fs=fs)
-    # power_stats = power_statistics(eeg_sig, fs=fs)
-    advanced_feats = vectorized_adv_stat(eeg_sig, fs=fs)
-    return np.concatenate((simple_stats, power_feats, advanced_feats), axis=1)
+    # simple_stats = simple_statistics(eeg_sig, fs=fs)
+    # power_feats = andreas_power_features(eeg_sig, fs=fs)
+    # # power_stats = power_statistics(eeg_sig, fs=fs)
+    # advanced_feats = vectorized_adv_stat(eeg_sig, fs=fs)
+    # return np.concatenate((simple_stats, power_feats, advanced_feats), axis=1)
+    return pruned_features(eeg_sig, fs=fs)
 
+@dispatch(pd.core.frame.DataFrame)
+def process_EMG(signal, fs=128):
+    return process_EMG(signal.values, fs=fs)
+
+@dispatch(np.ndarray)
 def process_EMG(signal, fs=128):
     simple_stats = simple_statistics(signal, fs=fs)
     feat_array = np.array([
@@ -387,7 +380,57 @@ def losocv_CRF(eeg1, eeg2, emg, y, C=0.5, weight_shift=0, fs=128):
         res.append(resy)
     return res
 
-def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_shift=0, fs=128):
+def losocv_CRF_prepro(xtrain, y, C=0.5, weight_shift=0, max_iter=1000, fs=128):
+    """Leave one subject out cross validation for the CRF model becasuse it requires
+    special datahandling. Input should be a Pandas Dataframe."""
+
+    epochs = 21600
+    num_sub = 3
+    # Indices of the subjects
+    sub_indices = [np.arange(0, epochs), np.arange(epochs, epochs*2),np.arange(epochs*2, epochs*3)]
+    res = []
+
+    for i in range(len(sub_indices)):
+
+        # For the ith iteration, select as trainin the sub_indices other than those at index i for train_index
+        train_index = np.concatenate([sub_indices[(i+1)%num_sub], sub_indices[(i+2)%num_sub]])
+        xtrain_ = xtrain[train_index]
+        y_train = y.values[train_index]
+        ytrain_ = y_train
+
+        # The test subject is the one at index i
+        test_index = sub_indices[i]
+        xtest_ = xtrain[test_index]
+        y_test = y.values[test_index]
+        ytest_ = y_test
+
+        # CRF Model Preprocessing
+        ytrain_classes = np.reshape(y_train, (y_train.shape[0],))
+        xtrain_crf = np.reshape(xtrain_, (2, -1, xtrain_.shape[1])) # Reshape so that it works with CRF
+        ytrain_crf = np.reshape(ytrain_, (2, -1)) -1 # Reshape so that it works with CRF
+
+        # CRF Model fitting:
+        classes = np.unique(ytrain_)
+        weights_crf = compute_class_weight("balanced", list(classes), list(ytrain_classes))
+        weights_crf[0] = weights_crf[0]+(2.5*weight_shift)
+        weights_crf[1] = weights_crf[1]+(1.5*weight_shift)
+
+        model = ChainCRF(class_weight=weights_crf)
+        ssvm = OneSlackSSVM(model=model, C=C, max_iter=max_iter)
+        ssvm.fit(xtrain_crf, ytrain_crf)
+
+        # Test on the third guy
+        xtest_crf = np.reshape(xtest_, (1, -1, xtest_.shape[1]))
+        ytest_crf = np.reshape(ytest_, (1, -1)) -1
+        y_pred_crf = ssvm.predict(xtest_crf)
+        y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
+
+        resy = sklearn.metrics.balanced_accuracy_score(ytest_, y_pred_crf)
+        print("Iteration, result:", i, resy)
+        res.append(resy)
+    return res
+
+def CRF_pred(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_shift=0, max_iter=1000, fs=128):
 
     # For the ith iteration, select as trainin the sub_indices other than those at index i for train_index
     eeg1_train = eeg1.values
@@ -419,11 +462,11 @@ def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_sh
     # CRF Model fitting:
     classes = np.unique(ytrain_)
     weights_crf = compute_class_weight("balanced", list(classes), list(ytrain_classes))
-    weights_crf[0] = weights_crf[0]+2.5*weight_shift
-    weights_crf[1] = weights_crf[1]+1.5*weight_shift
+    weights_crf[0] = weights_crf[0]+(2.5*weight_shift)
+    weights_crf[1] = weights_crf[1]+(1.5*weight_shift)
 
     model = ChainCRF(class_weight=weights_crf)
-    ssvm = OneSlackSSVM(model=model, C=C, max_iter=2000)
+    ssvm = OneSlackSSVM(model=model, C=C, max_iter=max_iter)
     ssvm.fit(xtrain_crf, ytrain_crf)
 
     # Test on the third guy
@@ -431,6 +474,80 @@ def CRF_submit(eeg1, eeg2, emg, y, eeg1test, eeg2test, emgtest, C=0.9, weight_sh
     y_pred_crf = ssvm.predict(xtest_crf)
     y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
     return y_pred_crf
+
+def CRF_pred_prepro(xtrain, y, xtest, C=0.9, weight_shift=0, max_iter=1000, fs=128):
+
+    y_train = y.values
+
+    # CRF Model Preprocessing
+    xtrain_ = xtrain
+    ytrain_classes = np.reshape(y_train, (y_train.shape[0],))
+    ytrain_ = y_train
+    xtest_ = xtest
+    xtrain_crf = np.reshape(xtrain_, (3, -1, xtrain_.shape[1])) # Reshape so that it works with CRF
+    ytrain_crf = np.reshape(ytrain_, (3, -1)) -1 # Reshape so that it works with CRF
+
+    # CRF Model fitting:
+    classes = np.unique(ytrain_)
+    weights_crf = compute_class_weight("balanced", list(classes), list(ytrain_classes))
+    weights_crf[0] = weights_crf[0]+(2.5*weight_shift)
+    weights_crf[1] = weights_crf[1]+(1.5*weight_shift)
+
+    model = ChainCRF(class_weight=weights_crf)
+    ssvm = OneSlackSSVM(model=model, C=C, max_iter=max_iter)
+    ssvm.fit(xtrain_crf, ytrain_crf)
+
+    # Test on the third guy
+    xtest_crf = np.reshape(xtest_, (2, -1, xtest_.shape[1]))
+    y_pred_crf = ssvm.predict(xtest_crf)
+    y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
+    return y_pred_crf
+
+# Neural Net stuff
+
+def from_label_to_vec(labels):
+    labels_vec = []
+    for l in labels:
+        if l == 1:
+            labels_vec.append([1,0,0])
+        elif l == 2:
+            labels_vec.append([0,1,0])
+        elif l == 3:
+            labels_vec.append([0,0,1])
+    return np.array(labels_vec)
+
+def weighted_categorical_crossentropy(weights):
+    """
+    A weighted version of keras.objectives.categorical_crossentropy
+
+    Variables:
+        weights: numpy array of shape (C,) where C is the number of classes
+
+    Usage:
+        weights = np.array([0.5,2,10]) # Class one at 0.5, class 2 twice the normal weights, class 3 10x.
+        loss = weighted_categorical_crossentropy(weights)
+        model.compile(loss=loss,optimizer='adam')
+    """
+
+    weights = K.variable(weights)
+
+    def loss(y_true, y_pred):
+        # scale predictions so that the class probas of each sample sum to 1
+        y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
+        # clip to prevent NaN's and Inf's
+        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+        # calc
+        loss = y_true * K.log(y_pred) * weights
+        loss = -K.sum(loss, -1)
+        return loss
+
+    return loss
+
+def from_vec_to_labels(vecs):
+    labels = []
+    for v in vecs:
+        labels.append(np.argmax(v) + 1)
+    return np.array(labels)
 
 # Optimized Fractal and Entropy functions
 @dispatch(np.ndarray, int)
