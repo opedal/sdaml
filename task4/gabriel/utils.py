@@ -549,6 +549,120 @@ def from_vec_to_labels(vecs):
         labels.append(np.argmax(v) + 1)
     return np.array(labels)
 
+def losocv_RNN_prepro(xtrain_, ytrain, epochs=20, batch_size=32, dropout=0.2, recurrent_dropout=0.2, optimizer='rmsprop', units=32, verbose=1):
+    # LSTM
+    print("Running LSTM...")
+    seed=2
+    kfold = KFold(n_splits=3, shuffle=False, random_state=seed)
+    EPOCHS=epochs
+    timesteps = 21600
+    classes = np.array([1,2,3])
+    num_classes=len(classes)
+    ytrain_classes = np.reshape(ytrain.values, (ytrain.shape[0],))
+    weights = compute_class_weight("balanced", list(classes), list(ytrain_classes))
+    cw = dict(zip(np.array([0,1,2]), weights))
+    lstm_predictions = []
+    data_dim = xtrain_.shape[1]
+    res = []
+
+    X_train = xtrain_
+    y_train = ytrain.values
+
+    for train, valid in kfold.split(X_train):
+        X_train_fold = X_train[train]
+        y_train_fold = y_train[train]
+
+        X_valid_fold = X_train[valid]
+        y_valid_fold = y_train[valid]
+
+        X_train_fold_scaled = preprocessing.StandardScaler().fit_transform(X_train_fold)
+        X_valid_fold_scaled = preprocessing.StandardScaler().fit_transform(X_valid_fold)
+
+        X_train_fold_scaled_lstm = np.reshape(X_train_fold_scaled, (2 * timesteps, 1, data_dim))
+        y_train_fold_lstm = from_label_to_vec(y_train_fold)
+
+        X_valid_fold_scaled_lstm= np.reshape(X_valid_fold_scaled, (timesteps, 1, data_dim))
+        y_valid_fold_lstm = from_label_to_vec(y_valid_fold)
+
+
+        model = Sequential()
+        model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True, stateful=True, batch_input_shape=(batch_size, 1, data_dim)))
+        model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True, stateful=True))
+        model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, stateful=True))
+        model.add(Dense(num_classes, activation='softmax'))
+
+
+        model.compile(loss=weighted_categorical_crossentropy(weights),
+                      optimizer=optimizer,
+                      metrics=['accuracy'])
+
+        model.fit(X_train_fold_scaled_lstm, y_train_fold_lstm,
+                  class_weight=cw,
+                  verbose=verbose,
+                  batch_size=batch_size, epochs=EPOCHS, shuffle=False,
+                  validation_data=(X_valid_fold_scaled_lstm, y_valid_fold_lstm))
+
+
+
+        y_pred_lstm = model.predict(X_valid_fold_scaled_lstm)
+        y_pred = np.reshape(from_vec_to_labels(y_pred_lstm), (y_valid_fold.shape[0], y_valid_fold.shape[1]))
+        resy = sklearn.metrics.balanced_accuracy_score(y_valid_fold, y_pred)
+
+        res.append(resy)
+    return res
+
+def RNN_pred_prepro(xtrain_, ytrain, xtest_, epochs=20, batch_size=32, dropout=0.2, recurrent_dropout=0.2, optimizer='rmsprop', units=32, verbose=1):
+    # LSTM
+    print("Running LSTM...")
+    seed=2
+    kfold = KFold(n_splits=3, shuffle=False, random_state=seed)
+    EPOCHS=epochs
+    timesteps = 21600
+    classes = np.array([1,2,3])
+    num_classes=len(classes)
+    ytrain_classes = np.reshape(ytrain.values, (ytrain.shape[0],))
+    weights = compute_class_weight("balanced", list(classes), list(ytrain_classes))
+    cw = dict(zip(np.array([0,1,2]), weights))
+    lstm_predictions = []
+    data_dim = xtrain_.shape[1]
+    res = []
+
+    X_train = xtrain_
+    y_train = ytrain.values
+
+    X_train_fold = X_train
+    y_train_fold = y_train
+
+    X_test_fold = xtest_
+
+    X_train_fold_scaled = preprocessing.StandardScaler().fit_transform(X_train_fold)
+    X_test_fold_scaled = preprocessing.StandardScaler().fit_transform(X_test_fold)
+
+    X_train_fold_scaled_lstm = np.reshape(X_train_fold_scaled, (3 * timesteps, 1, data_dim))
+    y_train_fold_lstm = from_label_to_vec(y_train_fold)
+
+    X_test_fold_scaled_lstm= np.reshape(X_test_fold_scaled, (2 * timesteps, 1, data_dim))
+
+    model = Sequential()
+    model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True, stateful=True, batch_input_shape=(batch_size, 1, data_dim)))
+    model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True, stateful=True))
+    model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, stateful=True))
+    model.add(Dense(num_classes, activation='softmax'))
+
+    model.compile(loss=weighted_categorical_crossentropy(weights),
+                  optimizer=optimizer,
+                  metrics=['accuracy'])
+
+    model.fit(X_train_fold_scaled_lstm, y_train_fold_lstm,
+              class_weight=cw,
+              verbose=verbose,
+              batch_size=batch_size, epochs=EPOCHS, shuffle=False)
+
+
+    y_pred_lstm = model.predict(X_test_fold_scaled_lstm)
+    y_pred = np.reshape(from_vec_to_labels(y_pred_lstm), (X_test_fold.shape[0], -1))
+    return y_pred
+
 # Optimized Fractal and Entropy functions
 @dispatch(np.ndarray, int)
 def hfd(X, Kmax):
