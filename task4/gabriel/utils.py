@@ -36,7 +36,6 @@ import scipy
 from scipy import integrate
 import biosppy
 from biosppy.signals import eeg, emg
-from scipy.signal import find_peaks,peak_prominences,peak_widths,periodogram
 from scipy.stats import kurtosis,skew
 import yasa
 from sklearn.utils.class_weight import compute_class_weight
@@ -200,28 +199,7 @@ def power_statistics(signal, fs=128):
     for i in tqdm(range(signal.shape[0])):
         _, _, FreqmaxP1, _, _, _ = findLFHF(psd[i, :], w)
         advanced_stats[i, :] = FreqmaxP1
-    # # Peak Features
-    # [peaks1,_] = find_peaks(signal_1)
-    # pprom1 = peak_prominences(signal_1,peaks1)[0]
-    # contour_heights1 = signal_1[peaks1] - pprom1
-    # pwid1 = peak_widths(signal_1,peaks1,rel_height=0.4)[0]
     return advanced_stats
-
-@dispatch(np.ndarray)
-def peak_statistics(sig, fs=128):
-    Rprom_arr = np.zeros([])
-    Rwidth_arr = np.array([])
-    res = np.zeros((sig.shape[0], 7))
-    for i in tqdm((np.arange(sig.shape[0]))):
-        print("I:", i)
-        RRpeaks = find_peaks(sig[i, :])[0]
-        Rprom = peak_prominences(sig[i, :], RRpeaks)[0]
-        Rprom = np.reshape(Rprom, (-1, 1))
-        Rwidth = peak_widths(sig[i, :], RRpeaks, rel_height=0.4)[0]
-        Rwidth = np.reshape(Rwidth, (-1, 1))
-        import pdb; pdb.set_trace()
-        res = np.vstack(res, np.concatenate((simple_statistics(Rprom_arr, fs=128), simple_statistics(Rwidth_arr, fs=128)), axis=1))
-    return res[1:]
 
 @dispatch(np.ndarray)
 def pruned_features(sig, fs=128):
@@ -502,166 +480,6 @@ def CRF_pred_prepro(xtrain, y, xtest, C=0.9, weight_shift=0, max_iter=1000, fs=1
     y_pred_crf = ssvm.predict(xtest_crf)
     y_pred_crf = np.asarray(y_pred_crf).reshape(-1) + 1
     return y_pred_crf
-
-# Neural Net stuff
-
-def from_label_to_vec(labels):
-    labels_vec = []
-    for l in labels:
-        if l == 1:
-            labels_vec.append([1,0,0])
-        elif l == 2:
-            labels_vec.append([0,1,0])
-        elif l == 3:
-            labels_vec.append([0,0,1])
-    return np.array(labels_vec)
-
-def weighted_categorical_crossentropy(weights):
-    """
-    A weighted version of keras.objectives.categorical_crossentropy
-
-    Variables:
-        weights: numpy array of shape (C,) where C is the number of classes
-
-    Usage:
-        weights = np.array([0.5,2,10]) # Class one at 0.5, class 2 twice the normal weights, class 3 10x.
-        loss = weighted_categorical_crossentropy(weights)
-        model.compile(loss=loss,optimizer='adam')
-    """
-
-    weights = K.variable(weights)
-
-    def loss(y_true, y_pred):
-        # scale predictions so that the class probas of each sample sum to 1
-        y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
-        # clip to prevent NaN's and Inf's
-        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
-        # calc
-        loss = y_true * K.log(y_pred) * weights
-        loss = -K.sum(loss, -1)
-        return loss
-
-    return loss
-
-def from_vec_to_labels(vecs):
-    labels = []
-    for v in vecs:
-        labels.append(np.argmax(v) + 1)
-    return np.array(labels)
-
-def losocv_RNN_prepro(xtrain_, ytrain, epochs=20, batch_size=32, dropout=0.2, recurrent_dropout=0.2, optimizer='rmsprop', units=32, verbose=1):
-    # LSTM
-    print("Running LSTM...")
-    seed=2
-    kfold = KFold(n_splits=3, shuffle=False, random_state=seed)
-    EPOCHS=epochs
-    timesteps = 21600
-    classes = np.array([1,2,3])
-    num_classes=len(classes)
-    ytrain_classes = np.reshape(ytrain.values, (ytrain.shape[0],))
-    weights = compute_class_weight("balanced", list(classes), list(ytrain_classes))
-    cw = dict(zip(np.array([0,1,2]), weights))
-    lstm_predictions = []
-    data_dim = xtrain_.shape[1]
-    res = []
-
-    X_train = xtrain_
-    y_train = ytrain.values
-
-    for train, valid in kfold.split(X_train):
-        X_train_fold = X_train[train]
-        y_train_fold = y_train[train]
-
-        X_valid_fold = X_train[valid]
-        y_valid_fold = y_train[valid]
-
-        X_train_fold_scaled = preprocessing.StandardScaler().fit_transform(X_train_fold)
-        X_valid_fold_scaled = preprocessing.StandardScaler().fit_transform(X_valid_fold)
-
-        X_train_fold_scaled_lstm = np.reshape(X_train_fold_scaled, (2 * timesteps, 1, data_dim))
-        y_train_fold_lstm = from_label_to_vec(y_train_fold)
-
-        X_valid_fold_scaled_lstm= np.reshape(X_valid_fold_scaled, (timesteps, 1, data_dim))
-        y_valid_fold_lstm = from_label_to_vec(y_valid_fold)
-
-
-        model = Sequential()
-        model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True, stateful=True, batch_input_shape=(batch_size, 1, data_dim)))
-        model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True, stateful=True))
-        model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, stateful=True))
-        model.add(Dense(num_classes, activation='softmax'))
-
-
-        model.compile(loss=weighted_categorical_crossentropy(weights),
-                      optimizer=optimizer,
-                      metrics=['accuracy'])
-
-        model.fit(X_train_fold_scaled_lstm, y_train_fold_lstm,
-                  class_weight=cw,
-                  verbose=verbose,
-                  batch_size=batch_size, epochs=EPOCHS, shuffle=False,
-                  validation_data=(X_valid_fold_scaled_lstm, y_valid_fold_lstm))
-
-
-
-        y_pred_lstm = model.predict(X_valid_fold_scaled_lstm)
-        y_pred = np.reshape(from_vec_to_labels(y_pred_lstm), (y_valid_fold.shape[0], y_valid_fold.shape[1]))
-        resy = sklearn.metrics.balanced_accuracy_score(y_valid_fold, y_pred)
-
-        res.append(resy)
-    return res
-
-def RNN_pred_prepro(xtrain_, ytrain, xtest_, epochs=20, batch_size=32, dropout=0.2, recurrent_dropout=0.2, optimizer='rmsprop', units=32, verbose=1):
-    # LSTM
-    print("Running LSTM...")
-    seed=2
-    kfold = KFold(n_splits=3, shuffle=False, random_state=seed)
-    EPOCHS=epochs
-    timesteps = 21600
-    classes = np.array([1,2,3])
-    num_classes=len(classes)
-    ytrain_classes = np.reshape(ytrain.values, (ytrain.shape[0],))
-    weights = compute_class_weight("balanced", list(classes), list(ytrain_classes))
-    cw = dict(zip(np.array([0,1,2]), weights))
-    lstm_predictions = []
-    data_dim = xtrain_.shape[1]
-    res = []
-
-    X_train = xtrain_
-    y_train = ytrain.values
-
-    X_train_fold = X_train
-    y_train_fold = y_train
-
-    X_test_fold = xtest_
-
-    X_train_fold_scaled = preprocessing.StandardScaler().fit_transform(X_train_fold)
-    X_test_fold_scaled = preprocessing.StandardScaler().fit_transform(X_test_fold)
-
-    X_train_fold_scaled_lstm = np.reshape(X_train_fold_scaled, (3 * timesteps, 1, data_dim))
-    y_train_fold_lstm = from_label_to_vec(y_train_fold)
-
-    X_test_fold_scaled_lstm= np.reshape(X_test_fold_scaled, (2 * timesteps, 1, data_dim))
-
-    model = Sequential()
-    model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True, stateful=True, batch_input_shape=(batch_size, 1, data_dim)))
-    model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True, stateful=True))
-    model.add(LSTM(units, dropout=dropout, recurrent_dropout=recurrent_dropout, stateful=True))
-    model.add(Dense(num_classes, activation='softmax'))
-
-    model.compile(loss=weighted_categorical_crossentropy(weights),
-                  optimizer=optimizer,
-                  metrics=['accuracy'])
-
-    model.fit(X_train_fold_scaled_lstm, y_train_fold_lstm,
-              class_weight=cw,
-              verbose=verbose,
-              batch_size=batch_size, epochs=EPOCHS, shuffle=False)
-
-
-    y_pred_lstm = model.predict(X_test_fold_scaled_lstm)
-    y_pred = np.reshape(from_vec_to_labels(y_pred_lstm), (X_test_fold.shape[0], -1))
-    return y_pred
 
 # Optimized Fractal and Entropy functions
 @dispatch(np.ndarray, int)
