@@ -1,0 +1,3 @@
+Task 4 was yet another prediction task, where we had to predict the sleep stage (i.e. deep, light and REM) from EEG and EMG signals collected on three subjects. 
+
+As in task 3, the preprocessing of the raw data was very important. For the EEG signals we extracted Fourier features of different wavelength with the help of the yasa package. As for the EMG signals, we relied mainly on summary statistics extracted from the signals. The final model was an ensemble of different models: Support vector machine, K-nearest neighbor, gradient boosting, logistic regression, random forest, stochastic gradient descent, convolutional neural network and recurrent neural network. This model got us to a position of just above 60 out of roughly 200 teams of ETH master students. 
